@@ -14,18 +14,16 @@ export default defineConfig(({mode}) => {
         registerType: 'autoUpdate',
         includeAssets: ['favicon.ico', 'placeholder-student.jpg', 'placeholder-guardian.jpg'],
         manifest: {
-          name: 'GuardLink Secure Enterprise',
-          short_name: 'GuardLink',
-          description: 'Enterprise Biometric Student Pickup Security',
-          theme_color: '#000000',
+          name: 'Sentinel Pickup System',
+          short_name: 'Sentinel',
+          description: 'Secure Biometric Campus Release Node',
+          theme_color: '#0a0a0a',
+          background_color: '#0a0a0a',
+          display: 'standalone',
+          orientation: 'portrait',
           icons: [
             {
-              src: 'pwa-192x192.png',
-              sizes: '192x192',
-              type: 'image/png'
-            },
-            {
-              src: 'pwa-512x512.png',
+              src: 'https://cdn-icons-png.flaticon.com/512/3135/3135715.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'any maskable'

@@ -29,6 +29,16 @@
 [data-accent='rose'] { --accent-primary: #f43f5e; --accent-alpha: rgba(244, 63, 94, 0.1); }
 
 @layer base {
+  html, body {
+    @apply overflow-hidden overscroll-none select-none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+  }
+  
+  img {
+    @apply pointer-events-none;
+  }
+
   body {
     @apply bg-background text-text-primary;
     transition: background-color 0.3s ease, color 0.3s ease;
