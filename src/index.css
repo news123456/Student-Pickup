@@ -1,20 +1,37 @@
 @import "tailwindcss";
 
 @theme {
-  --color-background: #050505;
-  --color-surface: rgba(255, 255, 255, 0.03);
-  --color-surface-border: rgba(255, 255, 255, 0.1);
-  --color-accent-emerald: #10b981;
-  --color-accent-emerald-alpha: rgba(16, 185, 129, 0.1);
-  --color-text-primary: #f3f4f6;
-  --color-text-secondary: #9ca3af;
+  --color-background: var(--bg-main);
+  --color-surface: var(--bg-surface);
+  --color-surface-border: var(--border-surface);
+  --color-accent-emerald: var(--accent-primary);
+  --color-accent-emerald-alpha: var(--accent-alpha);
+  --color-text-primary: var(--text-main);
+  --color-text-secondary: var(--text-muted);
   
   --font-mono: "Courier New", Courier, monospace;
 }
 
+:root {
+  --bg-main: #050505;
+  --bg-surface: rgba(255, 255, 255, 0.03);
+  --border-surface: rgba(255, 255, 255, 0.1);
+  --accent-primary: #10b981;
+  --accent-alpha: rgba(16, 185, 129, 0.1);
+  --text-main: #ffffff;
+  --text-muted: #9ca3af;
+  --card-bg: rgba(255, 255, 255, 0.02);
+}
+
+[data-accent='blue'] { --accent-primary: #3b82f6; --accent-alpha: rgba(59, 130, 246, 0.1); }
+[data-accent='purple'] { --accent-primary: #a855f7; --accent-alpha: rgba(168, 85, 247, 0.1); }
+[data-accent='amber'] { --accent-primary: #f59e0b; --accent-alpha: rgba(245, 158, 11, 0.1); }
+[data-accent='rose'] { --accent-primary: #f43f5e; --accent-alpha: rgba(244, 63, 94, 0.1); }
+
 @layer base {
   body {
     @apply bg-background text-text-primary;
+    transition: background-color 0.3s ease, color 0.3s ease;
     font-feature-settings: "ss01", "ss02", "cv01", "cv02";
   }
 }

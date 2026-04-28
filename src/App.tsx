@@ -5,7 +5,11 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import * as faceapi from 'face-api.js';
-import { Camera, UserPlus, ShieldCheck, History, Loader2, Search, CheckCircle2, UserCircle, Download, Trash2, Lock } from 'lucide-react';
+import { 
+  Camera, UserPlus, ShieldCheck, History, Loader2, Search, 
+  CheckCircle2, UserCircle, Download, Trash2, Lock,
+  Sun, Moon, Palette, Upload, Database, FileJson, AlertTriangle
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
 import { RegistryEntry, PickupLog, Guardian } from './types.ts';
@@ -13,7 +17,14 @@ import { exportLogsToPDF, exportRegistryToPDF, exportTechnicalDoc, exportPresent
 
 // Constants
 const MODEL_URL = 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js@master/weights';
-const REGISTRY_STORAGE_KEY = 'school_pickup_registry';
+const REGISTRY_STORAGE_KEY = 'guardlink_registry_v3';
+const HISTORY_STORAGE_KEY = 'guardlink_history_v3';
+const ACCENT_STORAGE_KEY = 'guardlink_accent';
+const BACKUP_INTERVAL_KEY = 'guardlink_backup_interval';
+const LAST_BACKUP_KEY = 'guardlink_last_backup_time';
+
+type Accent = 'emerald' | 'blue' | 'purple' | 'amber' | 'rose';
+type BackupInterval = 'off' | 'daily' | 'weekly';
 
 export default function App() {
   const [isModelsLoaded, setIsModelsLoaded] = useState(false);
@@ -26,6 +37,9 @@ export default function App() {
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
   const [adminPassword, setAdminPassword] = useState('');
   const [isLoginError, setIsLoginError] = useState(false);
+  const [accent, setAccent] = useState<Accent>((localStorage.getItem(ACCENT_STORAGE_KEY) as Accent) || 'emerald');
+  const [backupInterval, setBackupInterval] = useState<BackupInterval>((localStorage.getItem(BACKUP_INTERVAL_KEY) as BackupInterval) || 'off');
+  const [lastBackup, setLastBackup] = useState<number>(Number(localStorage.getItem(LAST_BACKUP_KEY)) || 0);
 
   // Load models on mount
   useEffect(() => {
@@ -50,11 +64,92 @@ export default function App() {
     }
     
     // Load history
-    const savedHistory = localStorage.getItem('school_secure_history');
+    const savedHistory = localStorage.getItem(HISTORY_STORAGE_KEY);
     if (savedHistory) {
       setRecentPickups(JSON.parse(savedHistory));
     }
   }, []);
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-accent', accent);
+  }, [accent]);
+
+  const changeAccent = (newAccent: Accent) => {
+    setAccent(newAccent);
+    localStorage.setItem(ACCENT_STORAGE_KEY, newAccent);
+  };
+
+  const changeBackupInterval = (interval: BackupInterval) => {
+    setBackupInterval(interval);
+    localStorage.setItem(BACKUP_INTERVAL_KEY, interval);
+  };
+
+  const exportBackup = () => {
+    const data = {
+      registry,
+      history: recentPickups,
+      exportedAt: new Date().toISOString(),
+      version: '3.0'
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `guardlink-auto-backup-${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    
+    const now = Date.now();
+    setLastBackup(now);
+    localStorage.setItem(LAST_BACKUP_KEY, now.toString());
+  };
+
+  // Auto-backup monitor
+  useEffect(() => {
+    if (backupInterval === 'off' || registry.length === 0) return;
+
+    const checkBackup = () => {
+      const now = Date.now();
+      const oneDay = 24 * 60 * 60 * 1000;
+      const oneWeek = 7 * oneDay;
+      const threshold = backupInterval === 'daily' ? oneDay : oneWeek;
+
+      if (now - lastBackup > threshold) {
+        console.log(`Triggering auto-backup (${backupInterval})`);
+        exportBackup();
+      }
+    };
+
+    const timer = setInterval(checkBackup, 60000); // Check every minute
+    checkBackup(); // Early check
+    return () => clearInterval(timer);
+  }, [backupInterval, lastBackup, registry]);
+
+  const importBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        if (data.registry && Array.isArray(data.registry)) {
+          setRegistry(data.registry);
+          localStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(data.registry));
+          if (data.history) {
+            setRecentPickups(data.history);
+            localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(data.history));
+          }
+          alert("Backup Restored Successfully. " + data.registry.length + " entries loaded.");
+        } else {
+          alert("Invalid backup format.");
+        }
+      } catch (err) {
+        alert("Failed to read backup file.");
+      }
+    };
+    reader.readAsText(file);
+  };
 
   const addToRegistry = (entry: RegistryEntry) => {
     // Basic validation to ensure student and at least one guardian was enrolled properly
@@ -83,7 +178,7 @@ export default function App() {
         timestamp: Date.now()
       };
       const newHistory = [newLog, ...prev.slice(0, 49)];
-      localStorage.setItem('school_secure_history', JSON.stringify(newHistory));
+      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(newHistory));
       return newHistory;
     });
   };
@@ -146,7 +241,27 @@ export default function App() {
           />
         </div>
 
-        <div className="hidden md:flex items-center space-x-4">
+        <div className="hidden md:flex items-center space-x-6">
+          <div className="flex items-center bg-surface p-1 rounded-lg border border-surface-border">
+            <div className="flex items-center space-x-1 px-1">
+              {(['emerald', 'blue', 'purple', 'amber', 'rose'] as Accent[]).map((a) => (
+                <button
+                  key={a}
+                  onClick={() => changeAccent(a)}
+                  className={cn(
+                    "w-2.5 h-2.5 rounded-full transition-all border border-white/10",
+                    accent === a ? "scale-125 border-white" : "opacity-40 hover:opacity-100",
+                    a === 'emerald' && "bg-[#10b981]",
+                    a === 'blue' && "bg-[#3b82f6]",
+                    a === 'purple' && "bg-[#a855f7]",
+                    a === 'amber' && "bg-[#f59e0b]",
+                    a === 'rose' && "bg-[#f43f5e]"
+                  )}
+                />
+              ))}
+            </div>
+          </div>
+
           <div className="status-badge text-accent-emerald bg-accent-emerald-alpha">
             <span className="w-1.5 h-1.5 bg-accent-emerald rounded-full mr-1.5 animate-pulse" />
             System Online
@@ -467,6 +582,10 @@ export default function App() {
               onDownload={() => exportRegistryToPDF(registry)}
               onDownloadTechnical={exportTechnicalDoc}
               onDownloadPresentation={exportPresentationDoc}
+              onExportBackup={exportBackup}
+              onImportBackup={importBackup}
+              backupInterval={backupInterval}
+              onSetBackupInterval={changeBackupInterval}
             />
           )}
         </AnimatePresence>
@@ -569,77 +688,119 @@ function Scanner({ registry, onMatch, onScanningStateChange }: {
   useEffect(() => {
     let requestRef: number;
     let lastProcessed = 0;
+    let isProcessingFrame = false;
+    let lastMatchId = '';
+    let lastMatchTime = 0;
 
     const runRecognition = async (time: number) => {
-      // Throttle to ~10-12 FPS to keep UI responsive while scanning
+      // 1. Visibility & Processing Lock Check
+      if (document.visibilityState !== 'visible' || isProcessingFrame) {
+        requestRef = requestAnimationFrame(runRecognition);
+        return;
+      }
+
+      // 2. Adaptive Throttling (Target ~10 FPS for detection)
       if (time - lastProcessed < 100) {
         requestRef = requestAnimationFrame(runRecognition);
         return;
       }
-      lastProcessed = time;
 
       if (!videoRef.current || !videoRef.current.videoWidth || registry.length === 0) {
         requestRef = requestAnimationFrame(runRecognition);
         return;
       }
 
-      if (canvasRef.current) {
-        const video = videoRef.current;
-        if (canvasRef.current.width !== video.videoWidth || canvasRef.current.height !== video.videoHeight) {
-          canvasRef.current.width = video.videoWidth;
-          canvasRef.current.height = video.videoHeight;
+      isProcessingFrame = true;
+      lastProcessed = time;
+
+      try {
+        if (canvasRef.current) {
+          const video = videoRef.current;
+          if (canvasRef.current.width !== video.videoWidth || canvasRef.current.height !== video.videoHeight) {
+            canvasRef.current.width = video.videoWidth;
+            canvasRef.current.height = video.videoHeight;
+          }
         }
-      }
 
-      // Use TinyFaceDetector for performance
-      const detections = await faceapi.detectAllFaces(
-        videoRef.current, 
-        new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 })
-      )
-      .withFaceLandmarks()
-      .withFaceDescriptors();
+        // 3. Higher Accuracy: scoreThreshold 0.6
+        const detections = await faceapi.detectAllFaces(
+          videoRef.current, 
+          new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.6 })
+        )
+        .withFaceLandmarks()
+        .withFaceDescriptors();
 
-      if (canvasRef.current) {
-        const ctx = canvasRef.current.getContext('2d');
-        if (ctx) {
-          ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-          detections.forEach(det => {
-            const box = det.detection.box;
-            ctx.strokeStyle = '#10b981';
-            ctx.lineWidth = 1.5;
-            ctx.setLineDash([4, 4]);
-            ctx.strokeRect(box.x, box.y, box.width, box.height);
+        if (canvasRef.current) {
+          const ctx = canvasRef.current.getContext('2d', { alpha: true });
+          if (ctx) {
+            ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+            detections.forEach(det => {
+              const box = det.detection.box;
+              ctx.strokeStyle = '#10b981';
+              ctx.lineWidth = 2;
+              ctx.setLineDash([5, 5]);
+              ctx.strokeRect(box.x, box.y, box.width, box.height);
+            });
+          }
+        }
+
+        if (detections.length > 0) {
+          const { guardians: guardianMatcher, student: studentMatcher } = matchers.current;
+
+          detections.forEach(detection => {
+            let matchFound = false;
+            let currentId = '';
+            let currentRole: 'guardian' | 'student' = 'student';
+            let currentIdx = 0;
+
+            if (guardianMatcher) {
+              const bestMatch = guardianMatcher.findBestMatch(detection.descriptor);
+              if (bestMatch.label !== 'unknown') {
+                const [studentId, guardianIdx] = bestMatch.label.split('_');
+                currentId = studentId;
+                currentRole = 'guardian';
+                currentIdx = parseInt(guardianIdx);
+                matchFound = true;
+              }
+            }
+
+            if (!matchFound && studentMatcher) {
+              const bestMatch = studentMatcher.findBestMatch(detection.descriptor);
+              if (bestMatch.label !== 'unknown') {
+                currentId = bestMatch.label;
+                currentRole = 'student';
+                matchFound = true;
+              }
+            }
+
+            // 4. Debounced Match Trigger (Prevent spamming state updates)
+            if (matchFound) {
+              const matchKey = `${currentId}_${currentRole}_${currentIdx}`;
+              const now = Date.now();
+              if (matchKey !== lastMatchId || now - lastMatchTime > 3000) {
+                const matched = registry.find(p => p.id === currentId);
+                if (matched) {
+                  onMatch(matched, currentRole, currentIdx);
+                  lastMatchId = matchKey;
+                  lastMatchTime = now;
+                }
+              }
+            }
           });
         }
+      } catch (err) {
+        console.warn("Recognition cycle error:", err);
+      } finally {
+        isProcessingFrame = false;
+        requestRef = requestAnimationFrame(runRecognition);
       }
-
-      if (detections.length > 0) {
-        const { guardians: guardianMatcher, student: studentMatcher } = matchers.current;
-
-        detections.forEach(detection => {
-          if (guardianMatcher) {
-            const bestMatch = guardianMatcher.findBestMatch(detection.descriptor);
-            if (bestMatch.label !== 'unknown') {
-              const [studentId, guardianIdx] = bestMatch.label.split('_');
-              const matched = registry.find(p => p.id === studentId);
-              if (matched) onMatch(matched, 'guardian', parseInt(guardianIdx));
-            }
-          }
-
-          if (studentMatcher) {
-            const bestMatch = studentMatcher.findBestMatch(detection.descriptor);
-            if (bestMatch.label !== 'unknown') {
-              const matched = registry.find(p => p.id === bestMatch.label);
-              if (matched) onMatch(matched, 'student');
-            }
-          }
-        });
-      }
-      requestRef = requestAnimationFrame(runRecognition);
     };
 
     requestRef = requestAnimationFrame(runRecognition);
-    return () => cancelAnimationFrame(requestRef);
+    return () => {
+      cancelAnimationFrame(requestRef);
+      isProcessingFrame = false;
+    };
   }, [registry, onMatch]);
 
   return (
@@ -707,6 +868,7 @@ function RegisterForm({ onEnroll }: { onEnroll: (entry: RegistryEntry) => void }
   
   const [studentDescriptor, setStudentDescriptor] = useState<number[] | null>(null);
   const [studentPhoto, setStudentPhoto] = useState<string | null>(null);
+  const [enrollmentError, setEnrollmentError] = useState<string | null>(null);
   
   const [enrolledGuardians, setEnrolledGuardians] = useState<Omit<Guardian, 'id'>[]>([]);
   const [currentGuardianRole, setCurrentGuardianRole] = useState<'Father' | 'Mother' | 'Guardian' | null>(null);
@@ -742,21 +904,55 @@ function RegisterForm({ onEnroll }: { onEnroll: (entry: RegistryEntry) => void }
     initCamera();
   }, [isCapturing]);
 
+  const playErrorBeep = () => {
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+
+      oscillator.type = 'square';
+      oscillator.frequency.setValueAtTime(150, audioCtx.currentTime); // Low pitched alert
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.5);
+    } catch (e) {
+      console.warn("Audio feedback failed:", e);
+    }
+  };
+
   const handleCapture = async () => {
     if (!videoRef.current || !streamRef.current) return;
 
     setIsProcessing(true);
+    setEnrollmentError(null);
     try {
+      // Accuracy/Performance balance: inputSize 320 is standard for TinyFaceDetector
       const detections = await faceapi.detectSingleFace(
         videoRef.current,
-        new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 })
+        new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.6 })
       )
       .withFaceLandmarks()
       .withFaceDescriptor();
 
       if (!detections) {
-        alert("Face not detected. Ensure framing is correct.");
+        setEnrollmentError("FACE NOT DETECTED: PLEASE ADJUST FRAMING");
+        playErrorBeep();
         return;
+      }
+
+      if (step === 'guardians' && studentDescriptor) {
+        // Compare with student to prevent identity swapping
+        const distance = faceapi.euclideanDistance(detections.descriptor, studentDescriptor);
+        if (distance < 0.45) { // Match threshold
+          setEnrollmentError("SECURITY ALERT: GUARDIAN IDENTITY MATCHES STUDENT. CAPTURE SEPARATE INDIVIDUALS.");
+          playErrorBeep();
+          return;
+        }
       }
 
       const canvas = document.createElement('canvas');
@@ -788,6 +984,7 @@ function RegisterForm({ onEnroll }: { onEnroll: (entry: RegistryEntry) => void }
       }
     } catch (err) {
       console.error(err);
+      setEnrollmentError("SCANNER ERROR: RESETTING INTERFACE");
     } finally {
       setIsProcessing(false);
     }
@@ -862,6 +1059,19 @@ function RegisterForm({ onEnroll }: { onEnroll: (entry: RegistryEntry) => void }
           </div>
 
           <div className="space-y-5">
+            {enrollmentError && (
+              <motion.div 
+                initial={{ opacity: 0, x: -10 }} 
+                animate={{ opacity: 1, x: 0 }} 
+                className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl mb-4"
+              >
+                <div className="flex items-center space-x-2 text-red-500">
+                  <AlertTriangle className="w-4 h-4" />
+                  <p className="text-[10px] font-black uppercase tracking-widest">{enrollmentError}</p>
+                </div>
+              </motion.div>
+            )}
+
             {step === 'details' && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-5">
                 <InputGroup label="Student Full Name" value={formData.childName} onChange={v => setFormData(f => ({...f, childName: v}))} />
@@ -1040,7 +1250,11 @@ function AdminTab({
   onDelete,
   onDownload,
   onDownloadTechnical,
-  onDownloadPresentation
+  onDownloadPresentation,
+  onExportBackup,
+  onImportBackup,
+  backupInterval,
+  onSetBackupInterval
 }: { 
   registry: RegistryEntry[]; 
   isAuthenticated: boolean; 
@@ -1050,8 +1264,21 @@ function AdminTab({
   onDownload: () => void;
   onDownloadTechnical: () => void;
   onDownloadPresentation: () => void;
+  onExportBackup: () => void;
+  onImportBackup: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  backupInterval: BackupInterval;
+  onSetBackupInterval: (v: BackupInterval) => void;
 }) {
   const [pass, setPass] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const filteredRegistry = registry.filter(person => {
+    const searchLower = searchTerm.toLowerCase();
+    const studentMatch = person.childName.toLowerCase().includes(searchLower);
+    const scholarMatch = person.scholarNo.toLowerCase().includes(searchLower);
+    const guardianMatch = person.guardians?.some(g => g.name.toLowerCase().includes(searchLower));
+    return studentMatch || scholarMatch || guardianMatch;
+  });
 
   if (!isAuthenticated) {
     return (
@@ -1061,7 +1288,7 @@ function AdminTab({
         className="max-w-md mx-auto mt-20 p-10 glass-card text-center"
       >
         <Lock className="w-12 h-12 text-accent-emerald mx-auto mb-6" />
-        <h2 className="text-xl font-black text-white italic uppercase tracking-tighter mb-2">ADMIN ACCESS</h2>
+        <h2 className="text-xl font-black text-text-primary italic uppercase tracking-tighter mb-2">ADMIN ACCESS</h2>
         <p className="text-xs text-text-secondary mb-8 uppercase tracking-widest">Master Credentials Required</p>
         
         <form onSubmit={(e) => { e.preventDefault(); onLogin(pass); }} className="space-y-4">
@@ -1071,8 +1298,8 @@ function AdminTab({
             onChange={(e) => setPass(e.target.value)}
             placeholder="ACCESS TOKEN"
             className={cn(
-              "w-full bg-black/40 border rounded-xl px-5 py-4 text-center text-sm font-black tracking-[0.3em] uppercase outline-none transition-all",
-              isLoginError ? "border-red-500 text-red-500 animate-shake" : "border-white/10 text-white focus:border-accent-emerald"
+              "w-full bg-surface border rounded-xl px-5 py-4 text-center text-sm font-black tracking-[0.3em] uppercase outline-none transition-all",
+              isLoginError ? "border-red-500 text-red-500 animate-shake" : "border-surface-border text-text-primary focus:border-accent-emerald"
             )}
           />
           <button 
@@ -1094,33 +1321,89 @@ function AdminTab({
       animate={{ opacity: 1, y: 0 }}
       className="max-w-6xl mx-auto space-y-8"
     >
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-6">
         <div>
-          <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase mb-1">REGISTRY CONTROL</h2>
-          <p className="text-text-secondary text-xs font-medium tracking-tight uppercase">Full Biometric Database Management Panel</p>
+          <h2 className="text-3xl font-black text-text-primary italic tracking-tighter uppercase mb-1">REGISTRY CONTROL</h2>
+          <p className="text-text-secondary text-xs font-medium tracking-tight uppercase italic">Distributed Biometric Ledger Management</p>
         </div>
-        <div className="flex items-center space-x-3">
+        <div className="flex flex-wrap items-center gap-3">
+           <div className="hidden lg:flex bg-surface p-1 rounded-xl border border-surface-border mr-2 items-center space-x-2 px-3 self-stretch">
+              <Database className="w-4 h-4 text-accent-emerald opacity-50" />
+              <div className="flex flex-col">
+                <span className="text-[10px] font-black text-text-primary uppercase italic leading-tight">Master Database</span>
+                <span className="text-[8px] font-bold text-text-secondary uppercase tracking-widest leading-tight">Persistence Tier A</span>
+              </div>
+           </div>
+           
            <button 
-            onClick={onDownloadTechnical}
-            className="bg-white/5 hover:bg-white/10 px-4 py-3 rounded-xl border border-white/5 text-[10px] font-black uppercase tracking-widest text-text-secondary flex items-center space-x-2 transition-all"
-          >
-            <ShieldCheck className="w-4 h-4" />
-            <span>Technical Doc</span>
-          </button>
-          <button 
-            onClick={onDownloadPresentation}
-            className="bg-white/5 hover:bg-white/10 px-4 py-3 rounded-xl border border-white/5 text-[10px] font-black uppercase tracking-widest text-text-secondary flex items-center space-x-2 transition-all"
-          >
-            <UserCircle className="w-4 h-4" />
-            <span>Presentation</span>
-          </button>
+             onClick={onExportBackup}
+             className="flex items-center space-x-2 px-4 py-3 bg-surface hover:bg-white/10 border border-surface-border rounded-xl transition-all group cursor-pointer"
+             title="Download JSON Backup"
+           >
+             <FileJson className="w-4 h-4 text-accent-emerald group-hover:scale-110 transition-all" />
+             <span className="text-[10px] font-black text-text-primary uppercase tracking-widest">Backup</span>
+           </button>
+
+           <label className="flex items-center space-x-2 px-4 py-3 bg-surface hover:bg-white/10 border border-surface-border rounded-xl transition-all group cursor-pointer">
+             <Upload className="w-4 h-4 text-accent-emerald group-hover:scale-110 transition-all" />
+             <span className="text-[10px] font-black text-text-primary uppercase tracking-widest">Restore</span>
+             <input type="file" accept=".json" onChange={onImportBackup} className="hidden" />
+           </label>
+
+           <div className="flex bg-surface p-1 rounded-xl border border-surface-border items-center">
+              <span className="text-[8px] font-black text-text-secondary uppercase tracking-widest px-2">Auto-Save:</span>
+              <div className="flex space-x-1">
+                {(['off', 'daily', 'weekly'] as BackupInterval[]).map((int) => (
+                  <button
+                    key={int}
+                    onClick={() => onSetBackupInterval(int)}
+                    className={cn(
+                      "px-2 py-1 rounded-md text-[8px] font-black uppercase transition-all",
+                      backupInterval === int 
+                        ? "bg-accent-emerald text-black" 
+                        : "text-text-secondary hover:text-white hover:bg-white/5"
+                    )}
+                  >
+                    {int}
+                  </button>
+                ))}
+              </div>
+           </div>
+
+           <div className="w-px h-8 bg-surface-border mx-2 hidden xl:block" />
+
+           <button 
+             onClick={onDownloadTechnical}
+             className="bg-surface hover:bg-white/10 px-4 py-3 rounded-xl border border-surface-border text-[10px] font-black uppercase tracking-widest text-text-secondary flex items-center space-x-2 transition-all cursor-pointer"
+           >
+             <ShieldCheck className="w-4 h-4" />
+             <span>Technical</span>
+           </button>
+
            <button 
             onClick={onDownload}
-            className="bg-accent-emerald text-black px-6 py-3 rounded-xl shadow-lg shadow-accent-emerald/20 text-[11px] font-black uppercase tracking-widest flex items-center space-x-2 transition-all"
+            className="bg-accent-emerald text-black px-6 py-3 rounded-xl shadow-lg shadow-accent-emerald/20 text-[11px] font-black uppercase tracking-widest flex items-center space-x-2 transition-all cursor-pointer"
           >
             <Download className="w-4 h-4" />
-            <span>Export Registry</span>
+            <span>Export PDF</span>
           </button>
+        </div>
+      </div>
+
+      <div className="glass-card p-4 flex items-center space-x-4">
+        <div className="relative flex-1">
+          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-text-secondary" />
+          <input 
+            type="text"
+            placeholder="SEARCH BY STUDENT, SCHOLAR ID, OR GUARDIAN NAME..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full bg-surface border border-surface-border rounded-xl pl-12 pr-4 py-3 text-xs font-bold text-text-primary placeholder:text-text-secondary/30 outline-none focus:ring-1 focus:ring-accent-emerald/50 focus:border-accent-emerald transition-all"
+          />
+        </div>
+        <div className="flex items-center space-x-2 text-[10px] font-black text-text-secondary uppercase tracking-widest px-2">
+          <Database className="w-3 h-3" />
+          <span>Matches: {filteredRegistry.length}</span>
         </div>
       </div>
 
@@ -1137,7 +1420,7 @@ function AdminTab({
             </tr>
           </thead>
           <tbody className="divide-y divide-white/2">
-            {registry.map((person) => (
+            {filteredRegistry.map((person) => (
               <tr key={person.id} className="hover:bg-white/1 transition-all group">
                 <td className="px-6 py-5">
                    <div className="flex -space-x-2">
@@ -1153,7 +1436,7 @@ function AdminTab({
                 </td>
                 <td className="px-6 py-5">
                    <div className="flex items-center space-x-3">
-                      <span className="text-sm font-bold text-white uppercase italic">{person.childName}</span>
+                      <span className="text-sm font-bold text-text-primary uppercase italic">{person.childName}</span>
                    </div>
                 </td>
                 <td className="px-6 py-5">
