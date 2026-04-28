@@ -1,0 +1,11 @@
+{
+  "name": "Secure Student Pickup",
+  "description": "Facial recognition system for school student pickup security. Recognizes parents and displays child details instantly.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "facial_recognition",
+    "real_time_monitoring"
+  ]
+}

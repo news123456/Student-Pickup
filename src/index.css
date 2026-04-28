@@ -1,0 +1,38 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #050505;
+  --color-surface: rgba(255, 255, 255, 0.03);
+  --color-surface-border: rgba(255, 255, 255, 0.1);
+  --color-accent-emerald: #10b981;
+  --color-accent-emerald-alpha: rgba(16, 185, 129, 0.1);
+  --color-text-primary: #f3f4f6;
+  --color-text-secondary: #9ca3af;
+  
+  --font-mono: "Courier New", Courier, monospace;
+}
+
+@layer base {
+  body {
+    @apply bg-background text-text-primary;
+    font-feature-settings: "ss01", "ss02", "cv01", "cv02";
+  }
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-surface border border-surface-border backdrop-blur-md rounded-xl shadow-2xl;
+  }
+  
+  .status-badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wider bg-accent-emerald-alpha border border-white/5;
+  }
+
+  .info-label {
+    @apply text-[11px] uppercase text-text-secondary tracking-widest font-bold;
+  }
+
+  .info-value {
+    @apply text-lg font-medium text-white;
+  }
+}
