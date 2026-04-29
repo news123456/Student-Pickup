@@ -30,9 +30,8 @@
 
 @layer base {
   html, body {
-    @apply overflow-hidden overscroll-none select-none;
+    @apply overflow-x-hidden select-none;
     -webkit-tap-highlight-color: transparent;
-    touch-action: manipulation;
   }
   
   img {

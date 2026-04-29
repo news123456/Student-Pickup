@@ -8,7 +8,7 @@ import * as faceapi from 'face-api.js';
 import { 
   Camera, UserPlus, ShieldCheck, History, Loader2, Search, 
   CheckCircle2, UserCircle, Download, Trash2, Lock,
-  Sun, Moon, Palette, Upload, Database, FileJson, AlertTriangle
+  Sun, Moon, Palette, Upload, Database, FileJson, AlertTriangle, Eye, EyeOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
@@ -22,6 +22,11 @@ const HISTORY_STORAGE_KEY = 'guardlink_history_v3';
 const ACCENT_STORAGE_KEY = 'guardlink_accent';
 const BACKUP_INTERVAL_KEY = 'guardlink_backup_interval';
 const LAST_BACKUP_KEY = 'guardlink_last_backup_time';
+
+interface SystemSettings {
+  systemPassword?: string;
+  backupEnabled?: boolean;
+}
 
 type Accent = 'emerald' | 'blue' | 'purple' | 'amber' | 'rose';
 type BackupInterval = 'off' | 'daily' | 'weekly';
@@ -40,10 +45,11 @@ export default function App() {
   const [accent, setAccent] = useState<Accent>((localStorage.getItem(ACCENT_STORAGE_KEY) as Accent) || 'emerald');
   const [backupInterval, setBackupInterval] = useState<BackupInterval>((localStorage.getItem(BACKUP_INTERVAL_KEY) as BackupInterval) || 'off');
   const [lastBackup, setLastBackup] = useState<number>(Number(localStorage.getItem(LAST_BACKUP_KEY)) || 0);
+  const [systemSettings, setSystemSettings] = useState<SystemSettings>({ systemPassword: 'admin', backupEnabled: true });
 
-  // Load models on mount
+  // Load models and initial data on mount
   useEffect(() => {
-    async function loadModels() {
+    async function init() {
       try {
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
@@ -51,24 +57,51 @@ export default function App() {
           faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
         ]);
         setIsModelsLoaded(true);
+
+        // Fetch from server
+        const regRes = await fetch("/api/registry");
+        const regData = await regRes.json();
+        if (Array.isArray(regData)) setRegistry(regData);
+
+        const settingsRes = await fetch("/api/settings");
+        const settingsData = await settingsRes.json();
+        setSystemSettings(settingsData);
+        
+        // Load history (still local for now, can be moved to server too if needed)
+        const savedHistory = localStorage.getItem(HISTORY_STORAGE_KEY);
+        if (savedHistory) {
+          setRecentPickups(JSON.parse(savedHistory));
+        }
       } catch (error) {
-        console.error("Error loading face-api models:", error);
+        console.error("Initialization error:", error);
       }
     }
-    loadModels();
-
-    // Load registry from local storage
-    const savedRegistry = localStorage.getItem(REGISTRY_STORAGE_KEY);
-    if (savedRegistry) {
-      setRegistry(JSON.parse(savedRegistry));
-    }
-    
-    // Load history
-    const savedHistory = localStorage.getItem(HISTORY_STORAGE_KEY);
-    if (savedHistory) {
-      setRecentPickups(JSON.parse(savedHistory));
-    }
+    init();
   }, []);
+
+  const syncRegistryWithServer = async (newRegistry: RegistryEntry[]) => {
+    try {
+      await fetch("/api/registry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newRegistry)
+      });
+    } catch (err) {
+      console.error("Failed to sync with server:", err);
+    }
+  };
+
+  const syncSettingsWithServer = async (newSettings: SystemSettings) => {
+    try {
+      await fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newSettings)
+      });
+    } catch (err) {
+      console.error("Failed to sync settings:", err);
+    }
+  };
 
   useEffect(() => {
     document.documentElement.setAttribute('data-accent', accent);
@@ -95,7 +128,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `guardlink-auto-backup-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `sentinel-local-drive-backup-${new Date().toISOString().split('T')[0]}.json`;
     a.click();
     URL.revokeObjectURL(url);
     
@@ -120,8 +153,8 @@ export default function App() {
       }
     };
 
-    const timer = setInterval(checkBackup, 60000); // Check every minute
-    checkBackup(); // Early check
+    const timer = setInterval(checkBackup, 60000); 
+    checkBackup(); 
     return () => clearInterval(timer);
   }, [backupInterval, lastBackup, registry]);
 
@@ -130,19 +163,17 @@ export default function App() {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       try {
         const data = JSON.parse(event.target?.result as string);
         if (data.registry && Array.isArray(data.registry)) {
           setRegistry(data.registry);
-          localStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(data.registry));
+          await syncRegistryWithServer(data.registry);
           if (data.history) {
             setRecentPickups(data.history);
             localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(data.history));
           }
-          alert("Backup Restored Successfully. " + data.registry.length + " entries loaded.");
-        } else {
-          alert("Invalid backup format.");
+          alert("Backup Restored Successfully. Data synced to local drive.");
         }
       } catch (err) {
         alert("Failed to read backup file.");
@@ -152,14 +183,10 @@ export default function App() {
   };
 
   const addToRegistry = (entry: RegistryEntry) => {
-    // Basic validation to ensure student and at least one guardian was enrolled properly
-    if (entry.studentFaceDescriptor.length !== 128 || entry.guardians.length === 0) {
-      console.error("Invalid registration data.");
-      return;
-    }
+    if (entry.studentFaceDescriptor.length !== 128 || entry.guardians.length === 0) return;
     const newRegistry = [...registry, entry];
     setRegistry(newRegistry);
-    localStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(newRegistry));
+    syncRegistryWithServer(newRegistry);
   };
 
   const logPickup = (entry: RegistryEntry, guardianIndex: number) => {
@@ -603,7 +630,7 @@ export default function App() {
               registry={registry} 
               isAuthenticated={isAdminAuthenticated}
               onLogin={(pass) => {
-                if (pass === 'admin123') {
+                if (pass === systemSettings.systemPassword) {
                   setIsAdminAuthenticated(true);
                   setIsLoginError(false);
                 } else {
@@ -614,7 +641,7 @@ export default function App() {
               onDelete={(id) => {
                 const updated = registry.filter(r => r.id !== id);
                 setRegistry(updated);
-                localStorage.setItem(REGISTRY_STORAGE_KEY, JSON.stringify(updated));
+                syncRegistryWithServer(updated);
               }}
               onDownload={() => exportRegistryToPDF(registry)}
               onDownloadTechnical={exportTechnicalDoc}
@@ -623,6 +650,11 @@ export default function App() {
               onImportBackup={importBackup}
               backupInterval={backupInterval}
               onSetBackupInterval={changeBackupInterval}
+              systemSettings={systemSettings}
+              onUpdateSettings={(s) => {
+                setSystemSettings(s);
+                syncSettingsWithServer(s);
+              }}
             />
           )}
         </AnimatePresence>
@@ -1291,7 +1323,9 @@ function AdminTab({
   onExportBackup,
   onImportBackup,
   backupInterval,
-  onSetBackupInterval
+  onSetBackupInterval,
+  systemSettings,
+  onUpdateSettings
 }: { 
   registry: RegistryEntry[]; 
   isAuthenticated: boolean; 
@@ -1305,9 +1339,17 @@ function AdminTab({
   onImportBackup: (e: React.ChangeEvent<HTMLInputElement>) => void;
   backupInterval: BackupInterval;
   onSetBackupInterval: (v: BackupInterval) => void;
+  systemSettings: SystemSettings;
+  onUpdateSettings: (s: SystemSettings) => void;
 }) {
   const [pass, setPass] = useState('');
+  const [showPass, setShowPass] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [view, setView] = useState<'registry' | 'settings'>('registry');
+  const [newPassword, setNewPassword] = useState(systemSettings.systemPassword || '');
+  const [showNewPass, setShowNewPass] = useState(false);
+  const [saveStatus, setSaveStatus] = useState(false);
 
   const filteredRegistry = registry.filter(person => {
     const searchLower = searchTerm.toLowerCase();
@@ -1329,25 +1371,34 @@ function AdminTab({
         <p className="text-xs text-text-secondary mb-8 uppercase tracking-widest">Master Credentials Required</p>
         
         <form onSubmit={(e) => { e.preventDefault(); onLogin(pass); }} className="space-y-4">
-          <input 
-            type="password"
-            value={pass}
-            onChange={(e) => setPass(e.target.value)}
-            placeholder="ACCESS TOKEN"
-            className={cn(
-              "w-full bg-surface border rounded-xl px-5 py-4 text-center text-sm font-black tracking-[0.3em] uppercase outline-none transition-all",
-              isLoginError ? "border-red-500 text-red-500 animate-shake" : "border-surface-border text-text-primary focus:border-accent-emerald"
-            )}
-          />
+          <div className="relative">
+            <input 
+              type={showPass ? "text" : "password"}
+              value={pass}
+              onChange={(e) => setPass(e.target.value)}
+              placeholder="ACCESS TOKEN"
+              className={cn(
+                "w-full bg-surface border rounded-xl px-5 py-4 text-center text-sm font-black tracking-[0.2em] uppercase outline-none transition-all",
+                isLoginError ? "border-red-500 text-red-500 animate-shake" : "border-surface-border text-text-primary focus:border-accent-emerald"
+              )}
+            />
+            <button 
+              type="button"
+              onClick={() => setShowPass(!showPass)}
+              className="absolute right-4 top-1/2 -translate-y-1/2 text-text-secondary hover:text-white transition-all cursor-pointer"
+            >
+              {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
           <button 
             type="submit"
-            className="w-full py-4 bg-white text-black rounded-xl font-black text-xs tracking-[0.3em] uppercase hover:bg-accent-emerald transition-all"
+            className="w-full py-4 bg-white text-black rounded-xl font-black text-xs tracking-[0.3em] uppercase hover:bg-accent-emerald transition-all cursor-pointer"
           >
             Authenticate
           </button>
         </form>
         {isLoginError && <p className="text-[10px] text-red-500 mt-4 uppercase font-bold tracking-widest">Invalid Security Token</p>}
-        <p className="text-[10px] text-white/20 mt-6 uppercase">Tip: demo password is admin123</p>
+        <p className="text-[10px] text-white/20 mt-6 uppercase">Tip: Check master config in local drive data folder</p>
       </motion.div>
     );
   }
@@ -1364,6 +1415,17 @@ function AdminTab({
           <p className="text-text-secondary text-[10px] sm:text-xs font-medium tracking-tight uppercase italic">Distributed Biometric Ledger Management</p>
         </div>
         <div className="flex flex-wrap items-center justify-center xl:justify-end gap-2 sm:gap-3">
+           <button 
+             onClick={() => setView(view === 'registry' ? 'settings' : 'registry')}
+             className={cn(
+               "flex items-center space-x-2 px-3 sm:px-4 py-2 sm:py-3 border rounded-xl transition-all group cursor-pointer",
+               view === 'settings' ? "bg-white text-black border-white" : "bg-surface hover:bg-white/10 border-surface-border text-text-primary"
+             )}
+           >
+             <Palette className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+             <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest">{view === 'registry' ? 'Settings' : 'Registry'}</span>
+           </button>
+
            <div className="hidden sm:flex bg-surface p-1 rounded-xl border border-surface-border mr-2 items-center space-x-2 px-3 self-stretch">
               <Database className="w-4 h-4 text-accent-emerald opacity-50" />
               <div className="flex flex-col">
@@ -1427,147 +1489,242 @@ function AdminTab({
         </div>
       </div>
 
-      <div className="glass-card p-3 sm:p-4 flex flex-col sm:flex-row items-center gap-4">
-        <div className="relative w-full sm:flex-1">
-          <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-text-secondary" />
-          <input 
-            type="text"
-            placeholder="SEARCH BY STUDENT, SCHOLAR ID, OR GUARDIAN NAME..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-surface border border-surface-border rounded-xl pl-12 pr-4 py-3 text-[10px] sm:text-xs font-bold text-text-primary placeholder:text-text-secondary/30 outline-none focus:ring-1 focus:ring-accent-emerald/50 focus:border-accent-emerald transition-all"
-          />
-        </div>
-        <div className="flex items-center justify-between w-full sm:w-auto space-x-2 text-[10px] font-black text-text-secondary uppercase tracking-widest px-2">
-          <div className="flex items-center space-x-2">
-            <Database className="w-3 h-3" />
-            <span>Matches: {filteredRegistry.length}</span>
+      {view === 'registry' ? (
+        <>
+          <div className="glass-card p-3 sm:p-4 flex flex-col sm:flex-row items-center gap-4">
+            <div className="relative w-full sm:flex-1">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-text-secondary" />
+              <input 
+                type="text"
+                placeholder="SEARCH BY STUDENT, SCHOLAR ID, OR GUARDIAN NAME..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full bg-surface border border-surface-border rounded-xl pl-12 pr-4 py-3 text-[10px] sm:text-xs font-bold text-text-primary placeholder:text-text-secondary/30 outline-none focus:ring-1 focus:ring-accent-emerald/50 focus:border-accent-emerald transition-all"
+              />
+            </div>
+            <div className="flex items-center justify-between w-full sm:w-auto space-x-2 text-[10px] font-black text-text-secondary uppercase tracking-widest px-2">
+              <div className="flex items-center space-x-2">
+                <Database className="w-3 h-3" />
+                <span>Matches: {filteredRegistry.length}</span>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
 
-      <div className="lg:glass-card overflow-hidden">
-        {/* Table View (Desktop) */}
-        <div className="hidden lg:block overflow-x-auto">
-          <table className="w-full text-left">
-            <thead>
-              <tr className="border-b border-white/5 bg-white/2">
-                <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-text-secondary">Profiles</th>
-                <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-text-secondary">Student Detail</th>
-                <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-text-secondary">Authorized Guardian</th>
-                <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-text-secondary">Class/Sec</th>
-                <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-text-secondary">Scholar ID</th>
-                <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-text-secondary text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/2">
-              {filteredRegistry.map((person) => (
-                <tr key={person.id} className="hover:bg-white/1 transition-all group">
-                  <td className="px-6 py-5">
-                    <div className="flex -space-x-2">
-                        <div className="w-10 h-10 rounded-lg border-2 border-surface bg-white/5 overflow-hidden ring-2 ring-black">
-                          {person.studentPhoto ? <img src={person.studentPhoto} alt="Student" className="w-full h-full object-cover" /> : null}
+          <div className="lg:glass-card overflow-hidden">
+            {/* Table View (Desktop) */}
+            <div className="hidden lg:block overflow-x-auto">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="border-b border-white/5 bg-white/2">
+                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-text-secondary">Profiles</th>
+                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-text-secondary">Student Detail</th>
+                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-text-secondary">Authorized Guardian</th>
+                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-text-secondary">Class/Sec</th>
+                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-text-secondary">Scholar ID</th>
+                    <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-text-secondary text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/2">
+                  {filteredRegistry.map((person) => (
+                    <tr key={person.id} className="hover:bg-white/1 transition-all group">
+                      <td className="px-6 py-5">
+                        <div className="flex -space-x-2">
+                            <div className="w-10 h-10 rounded-lg border-2 border-surface bg-white/5 overflow-hidden ring-2 ring-black">
+                              {person.studentPhoto ? <img src={person.studentPhoto} alt="Student" className="w-full h-full object-cover" /> : null}
+                            </div>
+                            {person.guardians?.map((g, gi) => (
+                              <div key={gi} className="w-10 h-10 rounded-lg border-2 border-surface bg-white/5 overflow-hidden ring-2 ring-black" title={g.name}>
+                                {g.photo ? <img src={g.photo} alt={g.role} className="w-full h-full object-cover" /> : null}
+                              </div>
+                            ))}
                         </div>
-                        {person.guardians?.map((g, gi) => (
-                          <div key={gi} className="w-10 h-10 rounded-lg border-2 border-surface bg-white/5 overflow-hidden ring-2 ring-black" title={g.name}>
-                            {g.photo ? <img src={g.photo} alt={g.role} className="w-full h-full object-cover" /> : null}
+                      </td>
+                      <td className="px-6 py-5">
+                        <div className="flex items-center space-x-3">
+                            <span className="text-sm font-bold text-text-primary uppercase italic">{person.childName}</span>
+                        </div>
+                      </td>
+                      <td className="px-6 py-5">
+                        <div className="space-y-1">
+                          {person.guardians?.map((g, gi) => (
+                            <div key={gi} className="flex flex-col">
+                              <span className="text-[11px] font-bold text-text-primary">{g.name}</span>
+                              <span className="text-[8px] font-black uppercase text-accent-emerald tracking-widest">{g.role}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-6 py-5">
+                        <span className="text-xs font-mono text-white/60">{person.classSec}</span>
+                      </td>
+                      <td className="px-6 py-5">
+                        <span className="text-xs font-mono text-accent-emerald">{person.scholarNo}</span>
+                      </td>
+                      <td className="px-6 py-5 text-right">
+                        {confirmDeleteId === person.id ? (
+                          <div className="flex items-center justify-end space-x-2">
+                             <button 
+                              onClick={() => setConfirmDeleteId(null)}
+                              className="px-3 py-1.5 text-[8px] font-black uppercase text-text-secondary hover:text-white transition-all cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                            <button 
+                              onClick={() => {
+                                onDelete(person.id);
+                                setConfirmDeleteId(null);
+                              }}
+                              className="px-3 py-1.5 bg-red-500 text-white text-[8px] font-black uppercase rounded-lg shadow-lg shadow-red-500/20 transition-all cursor-pointer"
+                            >
+                              Confirm
+                            </button>
                           </div>
-                        ))}
-                    </div>
-                  </td>
-                  <td className="px-6 py-5">
-                    <div className="flex items-center space-x-3">
-                        <span className="text-sm font-bold text-text-primary uppercase italic">{person.childName}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-5">
-                    <div className="space-y-1">
+                        ) : (
+                          <button 
+                            type="button"
+                            onClick={() => setConfirmDeleteId(person.id)}
+                            className="p-2 text-red-500/40 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all cursor-pointer"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Card View (Mobile/Tablet) */}
+            <div className="lg:hidden space-y-4">
+              {filteredRegistry.map((person) => (
+                <div key={person.id} className="glass-card p-4 space-y-4">
+                  <div className="flex justify-between items-start">
+                    <div className="flex -space-x-3">
+                      <div className="w-12 h-12 rounded-xl border-2 border-surface bg-white/5 overflow-hidden ring-4 ring-black/50">
+                        {person.studentPhoto ? <img src={person.studentPhoto} alt="Student" className="w-full h-full object-cover" /> : null}
+                      </div>
                       {person.guardians?.map((g, gi) => (
-                        <div key={gi} className="flex flex-col">
-                          <span className="text-[11px] font-bold text-text-primary">{g.name}</span>
-                          <span className="text-[8px] font-black uppercase text-accent-emerald tracking-widest">{g.role}</span>
+                        <div key={gi} className="w-12 h-12 rounded-xl border-2 border-surface bg-white/5 overflow-hidden ring-4 ring-black/50" title={g.name}>
+                          {g.photo ? <img src={g.photo} alt={g.role} className="w-full h-full object-cover" /> : null}
                         </div>
                       ))}
                     </div>
-                  </td>
-                  <td className="px-6 py-5">
-                    <span className="text-xs font-mono text-white/60">{person.classSec}</span>
-                  </td>
-                  <td className="px-6 py-5">
-                    <span className="text-xs font-mono text-accent-emerald">{person.scholarNo}</span>
-                  </td>
-                  <td className="px-6 py-5 text-right">
-                    <button 
-                      onClick={() => {
-                        if (confirm(`Revoke identity for ${person.childName}?`)) onDelete(person.id);
-                      }}
-                      className="p-2 text-red-500/40 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Card View (Mobile/Tablet) */}
-        <div className="lg:hidden space-y-4">
-          {filteredRegistry.map((person) => (
-            <div key={person.id} className="glass-card p-4 space-y-4">
-              <div className="flex justify-between items-start">
-                <div className="flex -space-x-3">
-                  <div className="w-12 h-12 rounded-xl border-2 border-surface bg-white/5 overflow-hidden ring-4 ring-black/50">
-                    {person.studentPhoto ? <img src={person.studentPhoto} alt="Student" className="w-full h-full object-cover" /> : null}
+                    {confirmDeleteId === person.id ? (
+                       <div className="flex items-center space-x-2">
+                          <button 
+                            onClick={() => setConfirmDeleteId(null)}
+                            className="px-4 py-2 text-[10px] font-black uppercase text-text-secondary hover:text-white transition-all cursor-pointer bg-white/5 rounded-xl"
+                          >
+                            Cancel
+                          </button>
+                          <button 
+                            onClick={() => {
+                              onDelete(person.id);
+                              setConfirmDeleteId(null);
+                            }}
+                            className="px-4 py-2 bg-red-500 text-white text-[10px] font-black uppercase rounded-xl shadow-lg shadow-red-500/20 cursor-pointer"
+                          >
+                            Confirm Delete
+                          </button>
+                       </div>
+                    ) : (
+                      <button 
+                        type="button"
+                        onClick={() => setConfirmDeleteId(person.id)}
+                        className="p-2.5 text-red-500 bg-red-500/10 rounded-xl cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
                   </div>
-                  {person.guardians?.map((g, gi) => (
-                    <div key={gi} className="w-12 h-12 rounded-xl border-2 border-surface bg-white/5 overflow-hidden ring-4 ring-black/50" title={g.name}>
-                      {g.photo ? <img src={g.photo} alt={g.role} className="w-full h-full object-cover" /> : null}
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-0.5">
+                      <span className="text-[8px] font-black uppercase text-text-secondary tracking-widest">Student</span>
+                      <p className="text-sm font-bold text-text-primary italic uppercase">{person.childName}</p>
                     </div>
-                  ))}
+                    <div className="space-y-0.5">
+                      <span className="text-[8px] font-black uppercase text-text-secondary tracking-widest">ID / Class</span>
+                      <p className="text-xs font-mono text-accent-emerald">{person.scholarNo} / {person.classSec}</p>
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-white/5">
+                    <span className="text-[8px] font-black uppercase text-text-secondary tracking-widest">Authorized Guardians</span>
+                    <div className="mt-2 space-y-2">
+                      {person.guardians?.map((g, gi) => (
+                        <div key={gi} className="flex items-center justify-between bg-white/2 p-2 rounded-lg">
+                          <span className="text-[11px] font-bold text-text-primary">{g.name}</span>
+                          <span className="text-[8px] font-black uppercase text-accent-emerald bg-accent-emerald/10 px-1.5 py-0.5 rounded transition-all">{g.role}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                 </div>
+              ))}
+            </div>
+            {registry.length === 0 && (
+              <div className="p-10 sm:p-20 text-center text-text-secondary uppercase text-[10px] font-black tracking-widest">
+                Database empty. enroll new profiles.
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <div className="max-w-2xl mx-auto space-y-8 glass-card p-10">
+          <div className="flex items-center space-x-4 border-b border-surface-border pb-6">
+            <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center text-accent-emerald">
+              <ShieldCheck className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-xl font-black text-white italic uppercase">System Configuration</h3>
+              <p className="text-[10px] text-text-secondary uppercase font-bold tracking-widest">Core Sentinel Node A-4</p>
+            </div>
+          </div>
+
+          <div className="space-y-6">
+            <div className="space-y-2">
+              <label className="info-label">Master Authentication Password</label>
+              <div className="relative">
+                <input 
+                  type={showNewPass ? "text" : "password"}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="w-full bg-surface border border-surface-border rounded-xl px-5 py-4 text-sm font-bold text-white focus:border-accent-emerald outline-none transition-all"
+                  placeholder="UPDATE MASTER PASSWORD..."
+                />
                 <button 
-                  onClick={() => {
-                    if (confirm(`Revoke identity for ${person.childName}?`)) onDelete(person.id);
-                  }}
-                  className="p-2.5 text-red-500 bg-red-500/10 rounded-xl"
+                  type="button"
+                  onClick={() => setShowNewPass(!showNewPass)}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 text-text-secondary hover:text-white transition-all cursor-pointer"
                 >
-                  <Trash2 className="w-4 h-4" />
+                  {showNewPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-0.5">
-                  <span className="text-[8px] font-black uppercase text-text-secondary tracking-widest">Student</span>
-                  <p className="text-sm font-bold text-text-primary italic uppercase">{person.childName}</p>
-                </div>
-                <div className="space-y-0.5">
-                  <span className="text-[8px] font-black uppercase text-text-secondary tracking-widest">ID / Class</span>
-                  <p className="text-xs font-mono text-accent-emerald">{person.scholarNo} / {person.classSec}</p>
-                </div>
-              </div>
-
-              <div className="pt-3 border-t border-white/5">
-                <span className="text-[8px] font-black uppercase text-text-secondary tracking-widest">Authorized Guardians</span>
-                <div className="mt-2 space-y-2">
-                  {person.guardians?.map((g, gi) => (
-                    <div key={gi} className="flex items-center justify-between bg-white/2 p-2 rounded-lg">
-                      <span className="text-[11px] font-bold text-text-primary">{g.name}</span>
-                      <span className="text-[8px] font-black uppercase text-accent-emerald bg-accent-emerald/10 px-1.5 py-0.5 rounded transition-all">{g.role}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
             </div>
-          ))}
-        </div>
-        {registry.length === 0 && (
-          <div className="p-10 sm:p-20 text-center text-text-secondary uppercase text-[10px] font-black tracking-widest">
-            Database empty. enroll new profiles.
+
+            <div className="p-6 bg-accent-emerald/5 rounded-2xl border border-accent-emerald/10 flex items-center justify-between">
+              <div>
+                <p className="text-xs font-black text-white uppercase italic">Full-Drive Persistence</p>
+                <p className="text-[10px] text-text-secondary uppercase font-medium">Automatic sync to local drive enabled</p>
+              </div>
+              <div className="status-badge text-accent-emerald bg-accent-emerald-alpha">ACTIVE</div>
+            </div>
+
+            <button 
+              onClick={() => {
+                onUpdateSettings({ ...systemSettings, systemPassword: newPassword });
+                setSaveStatus(true);
+                setTimeout(() => setSaveStatus(false), 2000);
+              }}
+              className="w-full py-4 bg-accent-emerald text-black rounded-xl font-black text-xs tracking-[0.2em] uppercase hover:shadow-[0_0_20px_rgba(16,185,129,0.3)] transition-all cursor-pointer"
+            >
+              {saveStatus ? "SETTINGS SAVED" : "SAVE CONFIGURATION"}
+            </button>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </motion.div>
   );
 }
