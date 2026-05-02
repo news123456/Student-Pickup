@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 @import "tailwindcss";
 
 @theme {
@@ -9,18 +10,30 @@
   --color-text-primary: var(--text-main);
   --color-text-secondary: var(--text-muted);
   
-  --font-mono: "Courier New", Courier, monospace;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
 :root {
-  --bg-main: #050505;
-  --bg-surface: rgba(255, 255, 255, 0.03);
-  --border-surface: rgba(255, 255, 255, 0.1);
+  --bg-main: #f8fafc;
+  --bg-surface: #ffffff;
+  --border-surface: #e2e8f0;
+  --accent-primary: #059669; /* Slightly deeper emerald */
+  --accent-alpha: rgba(5, 150, 105, 0.08);
+  --text-main: #0f172a;
+  --text-muted: #64748b;
+  --card-bg: #ffffff;
+}
+
+[data-theme='dark'] {
+  --bg-main: #0f172a;
+  --bg-surface: #1e293b;
+  --border-surface: #334155;
   --accent-primary: #10b981;
   --accent-alpha: rgba(16, 185, 129, 0.1);
-  --text-main: #ffffff;
-  --text-muted: #9ca3af;
-  --card-bg: rgba(255, 255, 255, 0.02);
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --card-bg: #1e293b;
 }
 
 [data-accent='blue'] { --accent-primary: #3b82f6; --accent-alpha: rgba(59, 130, 246, 0.1); }
@@ -30,35 +43,30 @@
 
 @layer base {
   html, body {
-    @apply overflow-x-hidden select-none;
+    @apply overflow-x-hidden antialiased;
     -webkit-tap-highlight-color: transparent;
   }
   
-  img {
-    @apply pointer-events-none;
-  }
-
   body {
-    @apply bg-background text-text-primary;
-    transition: background-color 0.3s ease, color 0.3s ease;
-    font-feature-settings: "ss01", "ss02", "cv01", "cv02";
+    @apply bg-background text-text-primary font-sans;
+    transition: background-color 0.3s cubic-bezier(0.4, 0, 0.2, 1), color 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 }
 
 @layer components {
   .glass-card {
-    @apply bg-surface border border-surface-border backdrop-blur-md rounded-xl shadow-2xl;
+    @apply bg-surface border border-surface-border rounded-2xl shadow-sm;
   }
   
   .status-badge {
-    @apply inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold uppercase tracking-wider bg-accent-emerald-alpha border border-white/5;
+    @apply inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider bg-accent-emerald-alpha border border-accent-emerald/10;
   }
 
   .info-label {
-    @apply text-[11px] uppercase text-text-secondary tracking-widest font-bold;
+    @apply text-[10px] uppercase text-text-secondary tracking-widest font-extrabold;
   }
 
   .info-value {
-    @apply text-lg font-medium text-white;
+    @apply text-base font-bold text-text-primary;
   }
 }

@@ -3,16 +3,24 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import { fileURLToPath } from "url";
 import fs from "fs/promises";
+import { createServer } from "http";
+import { Server } from "socket.io";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
+  const httpServer = createServer(app);
+  const io = new Server(httpServer, {
+    cors: { origin: "*" }
+  });
+
   const PORT = 3000;
   const DATA_DIR = path.join(__dirname, "data");
   const REGISTRY_FILE = path.join(DATA_DIR, "registry.json");
   const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
+  const HISTORY_FILE = path.join(DATA_DIR, "history.json");
 
   // Ensure data directory exists
   try {
@@ -36,6 +44,7 @@ async function startServer() {
   app.post("/api/registry", async (req, res) => {
     try {
       await fs.writeFile(REGISTRY_FILE, JSON.stringify(req.body, null, 2));
+      io.emit("registry-updated", req.body);
       res.json({ success: true });
     } catch (err) {
       console.error("Registry write error:", err);
@@ -61,6 +70,25 @@ async function startServer() {
     }
   });
 
+  app.get("/api/history", async (req, res) => {
+    try {
+      const data = await fs.readFile(HISTORY_FILE, "utf-8");
+      res.json(JSON.parse(data || "[]"));
+    } catch (err) {
+      res.json([]);
+    }
+  });
+
+  app.post("/api/history", async (req, res) => {
+    try {
+      await fs.writeFile(HISTORY_FILE, JSON.stringify(req.body, null, 2));
+      io.emit("history-updated", req.body);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: "Failed to save history" });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -76,7 +104,7 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }

@@ -20,13 +20,14 @@ export const exportLogsToPDF = (logs: PickupLog[]) => {
     log.scholarNo,
     log.classSec,
     `${log.guardianName} (${log.guardianRole})`,
+    log.cameraLabel || 'Main Node',
     new Date(log.timestamp).toLocaleDateString(),
     new Date(log.timestamp).toLocaleTimeString()
   ]);
 
   autoTable(doc, {
     startY: 45,
-    head: [['Student Name', 'Scholar No', 'Class/Sec', 'Verified Guardian', 'Date', 'Time']],
+    head: [['Student Name', 'Scholar No', 'Class/Sec', 'Verified Guardian', 'Capture Node', 'Date', 'Time']],
     body: tableData,
     headStyles: { fillColor: [16, 185, 129] },
     alternateRowStyles: { fillColor: [245, 245, 245] },

@@ -8,9 +8,11 @@ import * as faceapi from 'face-api.js';
 import { 
   Camera, UserPlus, ShieldCheck, History, Loader2, Search, 
   CheckCircle2, UserCircle, Download, Trash2, Lock,
-  Sun, Moon, Palette, Upload, Database, FileJson, AlertTriangle, Eye, EyeOff
+  Sun, Moon, Palette, Upload, Database, FileJson, AlertTriangle, Eye, EyeOff,
+  Zap, Activity
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { io, Socket } from 'socket.io-client';
 import { cn } from './lib/utils';
 import { RegistryEntry, PickupLog, Guardian } from './types.ts';
 import { exportLogsToPDF, exportRegistryToPDF, exportTechnicalDoc, exportPresentationDoc } from './lib/pdfExport';
@@ -35,8 +37,17 @@ export default function App() {
   const [isModelsLoaded, setIsModelsLoaded] = useState(false);
   const [registry, setRegistry] = useState<RegistryEntry[]>([]);
   const [activeTab, setActiveTab] = useState<'scan' | 'register' | 'history' | 'admin'>('scan');
-  const [matchedEntry, setMatchedEntry] = useState<RegistryEntry | null>(null);
-  const [matchStatus, setMatchStatus] = useState<{ guardian: boolean; student: boolean; guardianIndex?: number }>({ guardian: false, student: false });
+  const [laneStates, setLaneStates] = useState<{
+    [key: number]: {
+      matchedEntry: RegistryEntry | null;
+      matchStatus: { guardian: boolean; student: boolean; guardianIndex?: number };
+    }
+  }>({
+    1: { matchedEntry: null, matchStatus: { guardian: false, student: false } },
+    2: { matchedEntry: null, matchStatus: { guardian: false, student: false } },
+    3: { matchedEntry: null, matchStatus: { guardian: false, student: false } },
+  });
+  const [selectedSlot, setSelectedSlot] = useState<number>(1);
   const [isScanning, setIsScanning] = useState(false);
   const [recentPickups, setRecentPickups] = useState<PickupLog[]>([]);
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
@@ -46,11 +57,58 @@ export default function App() {
   const [backupInterval, setBackupInterval] = useState<BackupInterval>((localStorage.getItem(BACKUP_INTERVAL_KEY) as BackupInterval) || 'off');
   const [lastBackup, setLastBackup] = useState<number>(Number(localStorage.getItem(LAST_BACKUP_KEY)) || 0);
   const [systemSettings, setSystemSettings] = useState<SystemSettings>({ systemPassword: 'admin', backupEnabled: true });
+  const [availableDevices, setAvailableDevices] = useState<MediaDeviceInfo[]>([]);
+  const [assignedDevices, setAssignedDevices] = useState<{ [key: number]: string }>({});
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('sentinel-theme');
+    return (saved as 'light' | 'dark') || 'dark';
+  });
+  const socketRef = useRef<Socket | null>(null);
+
+  // Apply theme to document
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('sentinel-theme', theme);
+  }, [theme]);
 
   // Load models and initial data on mount
   useEffect(() => {
+    // Initialize Socket
+    socketRef.current = io();
+    
+    socketRef.current.on('registry-updated', (data) => {
+      setRegistry(data);
+    });
+
+    socketRef.current.on('history-updated', (data) => {
+      setRecentPickups(data);
+    });
+
+    async function getDevices() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true }); // Request permission first
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        
+        // Stop the initial permission stream immediately
+        stream.getTracks().forEach(track => track.stop());
+
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        setAvailableDevices(videoDevices);
+        
+        // Auto-assign if 1-3 cameras found
+        const newAssigned: { [key: number]: string } = {};
+        videoDevices.slice(0, 3).forEach((d, i) => {
+          newAssigned[i + 1] = d.deviceId;
+        });
+        setAssignedDevices(newAssigned);
+      } catch (err) {
+        console.error("Device discovery error:", err);
+      }
+    }
+
     async function init() {
       try {
+        await getDevices();
         await Promise.all([
           faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
           faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
@@ -67,16 +125,18 @@ export default function App() {
         const settingsData = await settingsRes.json();
         setSystemSettings(settingsData);
         
-        // Load history (still local for now, can be moved to server too if needed)
-        const savedHistory = localStorage.getItem(HISTORY_STORAGE_KEY);
-        if (savedHistory) {
-          setRecentPickups(JSON.parse(savedHistory));
-        }
+        const historyRes = await fetch("/api/history");
+        const historyData = await historyRes.json();
+        if (Array.isArray(historyData)) setRecentPickups(historyData);
       } catch (error) {
         console.error("Initialization error:", error);
       }
     }
     init();
+
+    return () => {
+      socketRef.current?.disconnect();
+    };
   }, []);
 
   const syncRegistryWithServer = async (newRegistry: RegistryEntry[]) => {
@@ -189,25 +249,27 @@ export default function App() {
     syncRegistryWithServer(newRegistry);
   };
 
-  const logPickup = (entry: RegistryEntry, guardianIndex: number) => {
-    setRecentPickups(prev => {
-      // Don't double-log the same student within a 30-second window
-      if (prev[0]?.scholarNo === entry.scholarNo && (Date.now() - prev[0].timestamp < 30000)) return prev;
-      
-      const guardian = entry.guardians[guardianIndex];
-      const newLog: PickupLog = {
-        id: crypto.randomUUID(),
-        studentName: entry.childName,
-        guardianName: guardian.name || 'Guardian',
-        guardianRole: guardian.role,
-        scholarNo: entry.scholarNo,
-        classSec: entry.classSec,
-        timestamp: Date.now()
-      };
-      const newHistory = [newLog, ...prev.slice(0, 49)];
-      localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(newHistory));
-      return newHistory;
-    });
+  const logPickup = (entry: RegistryEntry, guardianIndex: number, cameraLabel?: string) => {
+    const guardian = entry.guardians[guardianIndex];
+    const newLog: PickupLog = {
+      id: crypto.randomUUID(),
+      studentName: entry.childName,
+      guardianName: guardian.name || 'Guardian',
+      guardianRole: guardian.role,
+      scholarNo: entry.scholarNo,
+      classSec: entry.classSec,
+      timestamp: Date.now(),
+      cameraLabel: cameraLabel || 'Standard Node'
+    };
+    
+    const newHistory = [newLog, ...recentPickups.slice(0, 49)];
+    setRecentPickups(newHistory);
+    
+    fetch("/api/history", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newHistory)
+    }).catch(err => console.error("History sync error:", err));
   };
 
   if (!isModelsLoaded) {
@@ -218,9 +280,9 @@ export default function App() {
             <Loader2 className="w-full h-full text-accent-emerald animate-spin" />
             <div className="absolute inset-0 border-2 border-white/5 rounded-full" />
           </div>
-          <div className="space-y-2">
-            <h1 className="text-xl font-bold tracking-widest uppercase italic text-text-primary">Initializing Sentinel</h1>
-            <p className="text-text-secondary text-sm font-mono tracking-tight max-w-xs mx-auto">LOAD_BIOMETRIC_WEIGHTS: FETCHING...</p>
+          <div className="space-y-3">
+            <h1 className="text-xl font-extrabold tracking-tight uppercase text-text-primary">Initializing Sentinel</h1>
+            <p className="text-text-secondary text-[10px] font-medium tracking-widest max-w-xs mx-auto uppercase opacity-60">Loading Biometric Weights...</p>
           </div>
         </div>
       </div>
@@ -230,18 +292,18 @@ export default function App() {
   return (
     <div className="min-h-screen bg-background text-text-primary font-sans selection:bg-accent-emerald/30">
       {/* Navigation Bar */}
-      <nav className="h-[70px] border-b border-surface-border px-4 sm:px-8 flex items-center justify-between sticky top-0 z-50 backdrop-blur-xl bg-background/80">
-        <div className="flex items-center space-x-2 sm:space-x-3">
-          <div className="w-8 h-8 bg-accent-emerald rounded-lg flex items-center justify-center group shadow-[0_0_15px_rgba(16,185,129,0.3)] flex-shrink-0">
-            <ShieldCheck className="w-5 h-5 text-black" />
+      <nav className="h-[72px] border-b border-surface-border px-6 sm:px-10 flex items-center justify-between sticky top-0 z-50 backdrop-blur-xl bg-background/80">
+        <div className="flex items-center space-x-3 sm:space-x-4">
+          <div className="w-10 h-10 bg-accent-emerald rounded-xl flex items-center justify-center group shadow-sm flex-shrink-0">
+            <ShieldCheck className="w-6 h-6 text-white" />
           </div>
           <div className="hidden sm:block">
-            <h1 className="text-sm font-bold tracking-[0.15em] uppercase italic leading-none">SENTINEL PICKUP</h1>
-            <p className="text-[9px] font-bold text-text-secondary mt-1 uppercase tracking-widest">Secure Campus Node A-4</p>
+            <h1 className="text-sm font-extrabold tracking-tight uppercase leading-none text-text-primary">Sentinel Pickup</h1>
+            <p className="text-[10px] font-medium text-text-secondary mt-1 uppercase tracking-widest opacity-70">Main Campus Entry Point</p>
           </div>
         </div>
 
-        <div className="flex bg-surface border border-surface-border p-1 rounded-xl shadow-inner">
+        <div className="flex bg-surface border border-surface-border p-1 rounded-2xl shadow-sm">
           <NavBtn 
             active={activeTab === 'scan'} 
             onClick={() => setActiveTab('scan')} 
@@ -289,13 +351,24 @@ export default function App() {
             </div>
           </div>
 
-          <div className="status-badge text-accent-emerald bg-accent-emerald-alpha">
-            <span className="w-1.5 h-1.5 bg-accent-emerald rounded-full mr-1.5 animate-pulse" />
-            System Online
+          <button
+            onClick={() => setTheme(prev => prev === 'light' ? 'dark' : 'light')}
+            className="w-8 h-8 rounded-lg flex items-center justify-center border border-surface-border bg-surface hover:border-accent-emerald transition-all cursor-pointer group"
+          >
+            {theme === 'light' ? (
+              <Moon className="w-4 h-4 text-text-secondary group-hover:text-accent-emerald" />
+            ) : (
+              <Sun className="w-4 h-4 text-text-secondary group-hover:text-amber-400" />
+            )}
+          </button>
+
+          <div className="status-badge">
+            <span className="w-1.5 h-1.5 bg-accent-emerald rounded-full mr-2 animate-pulse" />
+            System Live
           </div>
           <div className="text-right">
-            <div className="text-xs font-bold text-white tracking-widest uppercase italic">{new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
-            <div className="text-[10px] font-mono text-text-secondary uppercase">{new Date().toLocaleTimeString()}</div>
+            <div className="text-xs font-bold text-text-primary uppercase">{new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
+            <div className="text-[10px] font-mono text-text-secondary uppercase mt-0.5">{new Date().toLocaleTimeString()}</div>
           </div>
         </div>
       </nav>
@@ -310,62 +383,90 @@ export default function App() {
               exit={{ opacity: 0, scale: 0.98 }}
               className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-10"
             >
-              {/* Left Column: Scanner */}
-              <div className="lg:col-span-8 flex flex-col">
-                <div className="glass-card overflow-hidden bg-black flex-1 relative flex flex-col">
-                  <div className="absolute top-4 left-4 z-10">
-                    <div className="status-badge text-[8px] sm:text-[10px] text-accent-emerald bg-black/40 backdrop-blur-md">
-                      Live Feed: Main Entrance
-                    </div>
-                  </div>
-                  
-                  <div className="flex-1 min-h-[300px] sm:min-h-[400px]">
-                    <Scanner 
-                      registry={registry} 
-                      onMatch={(entry, type, guardianIndex) => {
-                        if (!matchedEntry || matchedEntry.id !== entry.id) {
-                          setMatchedEntry(entry);
-                          setMatchStatus({ 
-                            guardian: type === 'guardian', 
-                            student: type === 'student',
-                            guardianIndex: type === 'guardian' ? guardianIndex : undefined
-                          });
-                        } else {
-                          setMatchStatus(prev => {
-                            const newStatus = {
-                              guardian: prev.guardian || type === 'guardian',
-                              student: prev.student || type === 'student',
-                              guardianIndex: type === 'guardian' ? guardianIndex : prev.guardianIndex
-                            };
-                            // Auto log when both are matched
-                            if (newStatus.guardian && newStatus.student && !(prev.guardian && prev.student)) {
-                              logPickup(entry, newStatus.guardianIndex!);
+              {/* Left Column: Scanner Grid */}
+              <div className="lg:col-span-8 flex flex-col space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
+                  {[1, 2, 3].map(slot => (
+                    <div key={slot} className={cn(
+                      "glass-card overflow-hidden bg-slate-100 relative flex flex-col min-h-[320px] shadow-sm ring-1 ring-black/5",
+                      slot === 1 && "md:col-span-2"
+                    )}>
+                      <Scanner 
+                        registry={registry} 
+                        deviceId={assignedDevices[slot]}
+                        cameraLabel={`Camera Node 0${slot}`}
+                        onMatch={(entry, type, guardianIndex) => {
+                          const cameraLabel = `Node 0${slot}`;
+                          
+                          setLaneStates(prev => {
+                            const lane = prev[slot];
+                            const isNewEntry = !lane.matchedEntry || lane.matchedEntry.id !== entry.id;
+                            
+                            let newEntry = isNewEntry ? entry : lane.matchedEntry;
+                            let newStatus;
+
+                            if (isNewEntry) {
+                              newStatus = {
+                                guardian: type === 'guardian',
+                                student: type === 'student',
+                                guardianIndex: type === 'guardian' ? guardianIndex : undefined
+                              };
+                            } else {
+                              newStatus = {
+                                guardian: lane.matchStatus.guardian || type === 'guardian',
+                                student: lane.matchStatus.student || type === 'student',
+                                guardianIndex: type === 'guardian' ? guardianIndex : lane.matchStatus.guardianIndex
+                              };
                             }
-                            return newStatus;
+
+                            // Log pickup if both are verified for the FIRST time in this lane
+                            if (newStatus.guardian && newStatus.student && !(lane.matchStatus.guardian && lane.matchStatus.student)) {
+                              logPickup(entry, newStatus.guardianIndex!, cameraLabel);
+                            }
+
+                            return {
+                              ...prev,
+                              [slot]: { 
+                                matchedEntry: newEntry, 
+                                matchStatus: newStatus 
+                              }
+                            };
                           });
-                        }
-                      }}
-                      onScanningStateChange={setIsScanning}
-                    />
-                  </div>
+
+                          // Auto-focus this lane if it's a new match and current lane is empty
+                          if (laneStates[selectedSlot].matchedEntry === null) {
+                            setSelectedSlot(slot);
+                          }
+                        }}
+                        onScanningStateChange={setIsScanning}
+                      />
+
+                      {/* Camera Selector */}
+                      <div className="absolute top-4 right-4 z-20">
+                        <select 
+                          value={assignedDevices[slot] || ''}
+                          onChange={(e) => setAssignedDevices(prev => ({...prev, [slot]: e.target.value}))}
+                          className="bg-surface/90 backdrop-blur-md border border-surface-border rounded-full px-3 py-1 text-[9px] font-bold uppercase text-text-primary outline-none cursor-pointer hover:bg-surface transition-all shadow-sm"
+                        >
+                          <option value="">No Source</option>
+                          {availableDevices.map(d => (
+                            <option key={d.deviceId} value={d.deviceId}>{d.label || `Camera ${d.deviceId.slice(0,4)}`}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  ))}
                 </div>
                 
-                <div className="mt-6 flex items-center justify-between p-4 glass-card bg-accent-emerald-alpha border-accent-emerald/20">
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-accent-emerald/20 rounded-full flex items-center justify-center text-accent-emerald">
-                      <ShieldCheck className="w-5 h-5" />
+                <div className="flex items-center justify-between p-5 glass-card">
+                  <div className="flex items-center space-x-4">
+                    <div className="w-12 h-12 bg-accent-emerald/10 rounded-2xl flex items-center justify-center text-accent-emerald">
+                      <ShieldCheck className="w-6 h-6" />
                     </div>
                     <div>
-                      <p className="text-[10px] font-black uppercase tracking-widest text-accent-emerald opacity-70">Security Protocol</p>
-                      <p className="text-xs text-white font-medium">Automatic facial verification active</p>
+                      <p className="text-[10px] font-black uppercase tracking-widest text-accent-emerald">Security active</p>
+                      <p className="text-sm text-text-primary font-bold">Biometric verification in progress</p>
                     </div>
-                  </div>
-                  <div className="flex -space-x-2">
-                    {[1,2,3].map(i => (
-                      <div key={i} className="w-8 h-8 rounded-full border-2 border-background bg-surface flex items-center justify-center text-[10px] font-bold text-text-secondary">
-                        {i}
-                      </div>
-                    ))}
                   </div>
                 </div>
               </div>
@@ -373,73 +474,108 @@ export default function App() {
               {/* Right Column: Result Details */}
               <div className="lg:col-span-4">
                 <div className="sticky top-28 space-y-6">
+                  {/* Lane Selector Tabs */}
+                  <div className="flex bg-background border border-surface-border p-1 rounded-2xl shadow-sm">
+                    {[1, 2, 3].map(slot => (
+                      <button
+                        key={slot}
+                        onClick={() => setSelectedSlot(slot)}
+                        className={cn(
+                          "flex-1 py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
+                          selectedSlot === slot 
+                            ? "bg-surface text-text-primary shadow-sm" 
+                            : "text-text-secondary hover:text-text-primary"
+                        )}
+                      >
+                        Lane {slot}
+                        {laneStates[slot].matchedEntry && (
+                          <span className="ml-2 w-1.5 h-1.5 bg-accent-emerald rounded-full inline-block animate-pulse" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+
                   <AnimatePresence mode="wait">
-                    {matchedEntry ? (
+                    {laneStates[selectedSlot].matchedEntry ? (
                       <motion.div
-                        key="result"
-                        initial={{ opacity: 0, x: 20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        exit={{ opacity: 0, x: 20 }}
+                        key={`result-${selectedSlot}-${laneStates[selectedSlot].matchedEntry.id}`}
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
                         className="glass-card ring-1 ring-accent-emerald/30 overflow-hidden"
                       >
                         <div className="p-6 sm:p-8 border-b border-surface-border bg-accent-emerald-alpha/5 relative overflow-hidden group">
                            <CheckCircle2 className={cn(
-                             "w-24 h-24 sm:w-32 sm:h-32 absolute -right-4 -bottom-4 rotate-12 transition-all duration-500",
-                             matchStatus.guardian && matchStatus.student ? "text-accent-emerald/20 scale-110" : "text-white/5 opacity-40"
+                             "w-24 h-24 sm:w-32 sm:h-32 absolute -right-4 -bottom-4 rotate-12 transition-all duration-500 opacity-20",
+                             laneStates[selectedSlot].matchStatus.guardian && laneStates[selectedSlot].matchStatus.student ? "text-accent-emerald scale-110" : "text-text-secondary/40"
                            )} />
                            <div className="relative">
                             <div className={cn(
                                "status-badge mb-4 border-accent-emerald/20 text-[8px] sm:text-[10px]",
-                               matchStatus.guardian && matchStatus.student ? "text-accent-emerald bg-accent-emerald-alpha" : "text-amber-500 bg-amber-500/10 border-amber-500/20"
+                               laneStates[selectedSlot].matchStatus.guardian && laneStates[selectedSlot].matchStatus.student ? "text-accent-emerald bg-accent-emerald-alpha" : "text-amber-500 bg-amber-500/10 border-amber-500/20"
                             )}>
-                              {matchStatus.guardian && matchStatus.student ? "Dual Verification Ready" : "Verification in Progress"}
+                              {laneStates[selectedSlot].matchStatus.guardian && laneStates[selectedSlot].matchStatus.student ? "Identification Verified" : "Awaiting Pairing"}
                             </div>
-                            <h3 className="text-2xl sm:text-3xl font-black text-white italic tracking-tighter uppercase leading-none">
-                              {matchStatus.guardian && matchStatus.student ? "IDENTITY MATCHED" : "AWAITING PARENT/STUDENT"}
+                            <h3 className="text-xl sm:text-2xl font-extrabold text-text-primary tracking-tight leading-none px-1">
+                              {laneStates[selectedSlot].matchStatus.guardian && laneStates[selectedSlot].matchStatus.student ? "Authorized Entry" : "Verification Pending"}
                             </h3>
-                            <p className="text-[9px] sm:text-[10px] uppercase font-bold tracking-[0.2em] text-accent-emerald mt-2">
-                              {matchStatus.guardian && !matchStatus.student && "Guardian Found. Please bring the student."}
-                              {!matchStatus.guardian && matchStatus.student && "Student Found. Please bring a guardian."}
-                              {matchStatus.guardian && matchStatus.student && "All Security checks passed."}
+                            <p className="text-[10px] uppercase font-bold tracking-widest text-accent-emerald mt-2 opacity-80">
+                              {laneStates[selectedSlot].matchStatus.guardian && !laneStates[selectedSlot].matchStatus.student && "Guardian Found. Please bring the student."}
+                              {!laneStates[selectedSlot].matchStatus.guardian && laneStates[selectedSlot].matchStatus.student && "Student Found. Please bring a guardian."}
+                              {laneStates[selectedSlot].matchStatus.guardian && laneStates[selectedSlot].matchStatus.student && "All Security checks passed."}
                             </p>
                           </div>
                         </div>
 
                         <div className="p-6 sm:p-8 space-y-7">
                           <div className="flex items-center justify-between">
-                             <InfoTile label="Student Primary" value={matchedEntry.childName} />
-                             <div className={cn("w-6 h-6 rounded-full flex items-center justify-center", matchStatus.student ? "bg-accent-emerald text-black" : "bg-white/5 text-white/20")}>
+                             <InfoTile label="Student Primary" value={laneStates[selectedSlot].matchedEntry.childName} />
+                             <div className={cn("w-6 h-6 rounded-full flex items-center justify-center", laneStates[selectedSlot].matchStatus.student ? "bg-accent-emerald text-white" : "bg-background border border-surface-border text-text-secondary/20")}>
                                <CheckCircle2 className="w-4 h-4" />
                              </div>
                           </div>
                           <div className="grid grid-cols-2 gap-6">
-                            <InfoTile label="Scholar ID" value={matchedEntry.scholarNo} mono />
-                            <InfoTile label="Class/Section" value={matchedEntry.classSec} />
+                            <InfoTile label="Scholar ID" value={laneStates[selectedSlot].matchedEntry.scholarNo} mono />
+                            <InfoTile label="Class/Section" value={laneStates[selectedSlot].matchedEntry.classSec} />
                           </div>
                           <div className="flex items-center justify-between">
                              <InfoTile 
-                               label={matchStatus.guardianIndex !== undefined ? matchedEntry.guardians[matchStatus.guardianIndex].role : "Authorized Guardian"} 
-                               value={matchStatus.guardianIndex !== undefined ? matchedEntry.guardians[matchStatus.guardianIndex].name : "Checking..."} 
+                               label={laneStates[selectedSlot].matchStatus.guardianIndex !== undefined ? laneStates[selectedSlot].matchedEntry.guardians[laneStates[selectedSlot].matchStatus.guardianIndex].role : "Authorized Guardian"} 
+                               value={laneStates[selectedSlot].matchStatus.guardianIndex !== undefined ? laneStates[selectedSlot].matchedEntry.guardians[laneStates[selectedSlot].matchStatus.guardianIndex].name : "Checking..."} 
                              />
-                             <div className={cn("w-6 h-6 rounded-full flex items-center justify-center", matchStatus.guardian ? "bg-accent-emerald text-black" : "bg-white/5 text-white/20")}>
+                             <div className={cn("w-6 h-6 rounded-full flex items-center justify-center", laneStates[selectedSlot].matchStatus.guardian ? "bg-accent-emerald text-white" : "bg-background border border-surface-border text-text-secondary/20")}>
                                <CheckCircle2 className="w-4 h-4" />
                              </div>
                           </div>
                           
-                          {matchStatus.guardian && matchStatus.student ? (
+                          {laneStates[selectedSlot].matchStatus.guardian && laneStates[selectedSlot].matchStatus.student ? (
                             <button 
                               onClick={() => {
-                                setMatchedEntry(null);
-                                setMatchStatus({ guardian: false, student: false });
+                                setLaneStates(prev => ({
+                                  ...prev,
+                                  [selectedSlot]: { matchedEntry: null, matchStatus: { guardian: false, student: false } }
+                                }));
                               }}
-                              className="w-full py-4 bg-accent-emerald text-black rounded-xl font-black text-xs tracking-[0.2em] uppercase hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] transition-all cursor-pointer"
+                              className="w-full py-4 bg-accent-emerald text-white rounded-xl font-black text-xs tracking-[0.2em] uppercase hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] transition-all cursor-pointer"
                             >
                               RELEASE STUDENT
+                            </button>
+                          ) : (laneStates[selectedSlot].matchStatus.guardian || laneStates[selectedSlot].matchStatus.student) ? (
+                            <button 
+                              onClick={() => {
+                                setLaneStates(prev => ({
+                                  ...prev,
+                                  [selectedSlot]: { matchedEntry: null, matchStatus: { guardian: false, student: false } }
+                                }));
+                              }}
+                              className="w-full py-4 bg-surface text-text-secondary rounded-xl font-black text-xs tracking-[0.2em] uppercase border border-surface-border cursor-pointer hover:bg-black/5 dark:hover:bg-white/5"
+                            >
+                              RESET LANE
                             </button>
                           ) : (
                             <button 
                               disabled
-                              className="w-full py-4 bg-white/5 text-white/20 rounded-xl font-black text-xs tracking-[0.2em] uppercase cursor-not-allowed border border-white/5"
+                              className="w-full py-4 bg-surface/50 text-text-secondary/30 rounded-xl font-black text-xs tracking-[0.2em] uppercase cursor-not-allowed border border-surface-border"
                             >
                               Awaiting Both Faces
                             </button>
@@ -453,12 +589,12 @@ export default function App() {
                         animate={{ opacity: 1 }}
                         className="glass-card border-none p-12 text-center aspect-square flex flex-col justify-center"
                       >
-                        <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-6 border border-white/5 relative">
+                        <div className="w-20 h-20 bg-surface rounded-full flex items-center justify-center mx-auto mb-6 border border-surface-border relative shadow-sm">
                           <div className="absolute inset-0 bg-accent-emerald/5 rounded-full animate-ping" />
                           <Search className="w-8 h-8 text-text-secondary relative" />
                         </div>
-                        <h3 className="text-sm font-bold text-white uppercase italic tracking-widest">SCAN IN PROGRESS</h3>
-                        <p className="text-[10px] text-text-secondary font-mono mt-3 max-w-[200px] mx-auto uppercase leading-relaxed">System awaiting optical biometric identification...</p>
+                        <h3 className="text-sm font-bold text-text-primary uppercase tracking-widest">Active Scan</h3>
+                        <p className="text-[10px] text-text-secondary font-medium mt-3 max-w-[200px] mx-auto uppercase leading-relaxed opacity-60">Waiting for biometric verification...</p>
                       </motion.div>
                     )}
                   </AnimatePresence>
@@ -470,14 +606,14 @@ export default function App() {
                       {recentPickups.slice(0, 3).map((log, i) => (
                         <div key={i} className="flex justify-between items-center bg-white/2 p-3 rounded-lg border border-white/5">
                           <div className="flex flex-col">
-                            <span className="text-[11px] font-bold text-white uppercase italic truncate max-w-[120px]">{log.studentName}</span>
+                            <span className="text-[11px] font-bold text-text-primary uppercase truncate max-w-[120px]">{log.studentName}</span>
                             <span className="text-[9px] font-bold text-text-secondary uppercase">ID: {log.scholarNo}</span>
                           </div>
                           <span className="font-mono text-[10px] text-accent-emerald">{new Date(log.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                         </div>
                       ))}
                       {recentPickups.length === 0 && (
-                        <p className="text-[10px] text-text-secondary italic text-center py-4 uppercase">No records found</p>
+                        <p className="text-[10px] text-text-secondary text-center py-4 uppercase font-medium">No records found</p>
                       )}
                     </div>
                   </div>
@@ -509,8 +645,8 @@ export default function App() {
               <div className="glass-card overflow-hidden">
                 <div className="p-6 sm:p-10 border-b border-surface-border flex flex-col sm:flex-row items-center justify-between gap-6">
                   <div className="text-center sm:text-left">
-                    <div className="status-badge text-accent-emerald bg-accent-emerald-alpha mb-3 mx-auto sm:mx-0 w-fit">Audit Logs</div>
-                    <h2 className="text-2xl sm:text-3xl font-black text-white italic tracking-tighter uppercase mb-1 leading-none">Access History</h2>
+                    <div className="status-badge mb-3 mx-auto sm:mx-0 w-fit">Audit Logs</div>
+                    <h2 className="text-2xl sm:text-3xl font-extrabold text-text-primary tracking-tight mb-2 leading-none">Log Archives</h2>
                     <p className="text-text-secondary text-[10px] sm:text-xs font-medium tracking-tight">Full historical log of campus student releases.</p>
                   </div>
                   <div className="flex items-center space-x-3">
@@ -533,7 +669,7 @@ export default function App() {
                         <tr className="border-b border-white/5">
                           <th className="info-label px-4 py-4">Student Detail</th>
                           <th className="info-label px-4 py-4">Authorized Guardian</th>
-                          <th className="info-label px-4 py-4">Class</th>
+                          <th className="info-label px-4 py-4">Tracking Node</th>
                           <th className="info-label px-4 py-4 text-right">Timestamp</th>
                         </tr>
                       </thead>
@@ -559,17 +695,20 @@ export default function App() {
                                     <span className="text-[9px] font-black uppercase tracking-widest text-accent-emerald px-1.5 py-0.5 bg-accent-emerald/10 rounded">
                                       {log.guardianRole}
                                     </span>
-                                    <p className="text-[9px] uppercase font-bold text-white/40 tracking-widest">Verified</p>
+                                    <p className="text-[9px] uppercase font-bold text-text-secondary/40 tracking-widest">Verified</p>
                                   </div>
                                 </div>
                               </td>
                               <td className="px-4 py-6">
-                                <span className="px-2 py-1 bg-surface border border-white/10 rounded text-[10px] font-bold text-white uppercase italic tracking-widest">
-                                  {log.classSec}
-                                </span>
+                                <div className="flex flex-col">
+                                  <span className="px-2 py-1 bg-background border border-surface-border rounded text-[10px] font-bold text-text-primary uppercase tracking-widest w-fit">
+                                    {log.cameraLabel || 'Standard'}
+                                  </span>
+                                  <span className="text-[8px] mt-1 text-text-secondary uppercase font-black tracking-widest">{log.classSec}</span>
+                                </div>
                               </td>
                               <td className="px-4 py-6 text-right">
-                                <p className="text-xs font-bold text-white font-mono">{new Date(log.timestamp).toLocaleTimeString()}</p>
+                                <p className="text-xs font-bold text-text-primary font-mono">{new Date(log.timestamp).toLocaleTimeString()}</p>
                                 <p className="text-[10px] font-bold text-text-secondary uppercase tracking-tighter">{new Date(log.timestamp).toLocaleDateString()}</p>
                               </td>
                             </tr>
@@ -603,9 +742,12 @@ export default function App() {
                               <span className="text-[8px] font-black text-text-secondary uppercase tracking-widest mb-1">Authenticated Guardian</span>
                               <p className="text-xs font-bold text-text-primary px-1">{log.guardianName}</p>
                             </div>
-                            <span className="text-[8px] font-black uppercase tracking-widest text-accent-emerald bg-accent-emerald/10 px-2 py-1 rounded">
-                              {log.guardianRole}
-                            </span>
+                            <div className="flex flex-col items-end">
+                               <span className="text-[8px] font-black uppercase tracking-widest text-accent-emerald bg-accent-emerald/10 px-2 py-1 rounded">
+                                 {log.guardianRole}
+                               </span>
+                               <span className="text-[7px] text-white/40 mt-1 uppercase font-bold">{log.cameraLabel || 'Main Node'}</span>
+                            </div>
                           </div>
                           <div className="flex justify-between items-center text-[10px] font-mono text-white/40 pt-1">
                             <span>{new Date(log.timestamp).toLocaleDateString()}</span>
@@ -670,33 +812,75 @@ function NavBtn({ active, onClick, label, icon }: { active: boolean; onClick: ()
     <button 
       onClick={onClick}
       className={cn(
-        "px-3 sm:px-6 py-2 rounded-lg transition-all flex items-center space-x-2 group cursor-pointer",
-        active ? "bg-accent-emerald text-black shadow-lg shadow-accent-emerald/40" : "text-text-secondary hover:text-white"
+        "px-4 sm:px-6 py-2.5 rounded-xl transition-all duration-200 flex items-center space-x-2.5 group cursor-pointer",
+        active 
+          ? "bg-accent-emerald text-white shadow-sm shadow-accent-emerald/20" 
+          : "text-text-secondary hover:text-text-primary hover:bg-black/5"
       )}
     >
-      <span className={cn("transition-colors", active ? "text-black" : "text-text-secondary group-hover:text-accent-emerald")}>{icon}</span>
-      <span className="hidden md:inline text-[11px] font-black uppercase tracking-widest">{label}</span>
+      <span className={cn("transition-colors", active ? "text-white" : "text-text-secondary group-hover:text-accent-emerald")}>{icon}</span>
+      <span className="hidden md:inline text-[11px] font-bold uppercase tracking-wider">{label}</span>
     </button>
   );
 }
 
 function InfoTile({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <div className="space-y-2">
-      <p className="info-label">{label}</p>
-      <p className={cn("info-value", mono && "font-mono text-base uppercase tracking-wider")}>{value}</p>
+    <div className="space-y-1.5 p-4 rounded-xl bg-background border border-surface-border shadow-sm">
+      <p className="info-label opacity-60">{label}</p>
+      <p className={cn("info-value", mono && "font-mono text-sm tracking-tight")}>{value}</p>
     </div>
   );
 }
 
-function Scanner({ registry, onMatch, onScanningStateChange }: { 
+function Scanner({ 
+  registry, 
+  onMatch, 
+  onScanningStateChange,
+  cameraLabel = 'Scanner',
+  deviceId
+}: { 
   registry: RegistryEntry[]; 
   onMatch: (entry: RegistryEntry, type: 'guardian' | 'student', guardianIndex?: number) => void;
   onScanningStateChange: (state: boolean) => void;
+  cameraLabel?: string;
+  deviceId?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const [detectionInfo, setDetectionInfo] = useState<{ label: string; confidence: number; isMatch: boolean; box: faceapi.Box }[]>([]);
+  const [isCameraActive, setIsCameraActive] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const lastBeepTime = useRef<number>(0);
+
+  // Audio Context for Beep
+  const playWarningBeep = () => {
+    const now = Date.now();
+    if (now - lastBeepTime.current < 2000) return; // Rate limit beeps to every 2 seconds
+    lastBeepTime.current = now;
+
+    try {
+      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const oscillator = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+
+      oscillator.type = 'square';
+      oscillator.frequency.setValueAtTime(440, audioCtx.currentTime);
+      oscillator.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.1);
+      
+      gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3);
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      oscillator.start();
+      oscillator.stop(audioCtx.currentTime + 0.3);
+    } catch (e) {
+      console.warn("Audio Context failed:", e);
+    }
+  };
   
   // Memoize descriptors and matchers to avoid heavy re-calculations
   const matchers = useRef<{ guardians: faceapi.FaceMatcher | null, student: faceapi.FaceMatcher | null }>({ guardians: null, student: null });
@@ -704,8 +888,6 @@ function Scanner({ registry, onMatch, onScanningStateChange }: {
   useEffect(() => {
     if (registry.length === 0) return;
 
-    // Filter to ensure we only use valid descriptors (128 length)
-    // For guardians, we map them to labels like "studentId_guardianIndex"
     const guardianDescriptors: faceapi.LabeledFaceDescriptors[] = [];
     const studentDescriptors: faceapi.LabeledFaceDescriptors[] = [];
 
@@ -727,22 +909,49 @@ function Scanner({ registry, onMatch, onScanningStateChange }: {
     };
   }, [registry]);
 
-  const startCamera = async () => {
+  const startCamera = async (retryCount = 0) => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { 
-          width: { ideal: 640 }, 
-          height: { ideal: 480 },
-          facingMode: "user" 
-        } 
-      });
+      setErrorMsg(null);
+      // Stagger initial start to avoid multiple simultaneous requests
+      if (retryCount === 0) {
+        const staggerIndex = parseInt(cameraLabel.match(/\d+/)?.[0] || '0');
+        await new Promise(r => setTimeout(r, staggerIndex * 600));
+      }
+
+      // Stop existing tracks if any
+      streamRef.current?.getTracks().forEach(track => track.stop());
+
+      // On second retry, relax constraints (remove exact)
+      const videoConstraints: MediaTrackConstraints = {
+        width: { ideal: 640 },
+        height: { ideal: 480 },
+      };
+
+      if (deviceId) {
+        if (retryCount === 0) {
+          videoConstraints.deviceId = { exact: deviceId };
+        } else {
+          videoConstraints.deviceId = deviceId; // Try without exact
+        }
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints });
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         streamRef.current = stream;
+        setIsCameraActive(true);
         onScanningStateChange(true);
       }
     } catch (err) {
-      console.error("Camera access denied:", err);
+      if (retryCount < 2) {
+        console.warn(`Camera ${cameraLabel} failed, retrying... (${retryCount + 1})`);
+        setTimeout(() => startCamera(retryCount + 1), 1000);
+        return;
+      }
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Camera ${cameraLabel} access denied:`, msg);
+      setErrorMsg(msg);
+      setIsCameraActive(false);
     }
   };
 
@@ -751,8 +960,9 @@ function Scanner({ registry, onMatch, onScanningStateChange }: {
     return () => {
       streamRef.current?.getTracks().forEach(track => track.stop());
       onScanningStateChange(false);
+      setIsCameraActive(false);
     };
-  }, []);
+  }, [deviceId]);
 
   useEffect(() => {
     let requestRef: number;
@@ -799,63 +1009,67 @@ function Scanner({ registry, onMatch, onScanningStateChange }: {
         .withFaceLandmarks()
         .withFaceDescriptors();
 
-        if (canvasRef.current) {
-          const ctx = canvasRef.current.getContext('2d', { alpha: true });
-          if (ctx) {
-            ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-            detections.forEach(det => {
-              const box = det.detection.box;
-              ctx.strokeStyle = '#10b981';
-              ctx.lineWidth = 2;
-              ctx.setLineDash([5, 5]);
-              ctx.strokeRect(box.x, box.y, box.width, box.height);
-            });
+        const currentDetections: any[] = [];
+        const { guardians: guardianMatcher, student: studentMatcher } = matchers.current;
+
+        detections.forEach(detection => {
+          let bestMatch: any = null;
+          let matchType: 'student' | 'guardian' | null = null;
+          let guardianIdx: number | undefined;
+
+          if (studentMatcher) {
+            const studentMatch = studentMatcher.findBestMatch(detection.descriptor);
+            if (studentMatch.label !== 'unknown' && studentMatch.distance < 0.45) {
+              bestMatch = studentMatch;
+              matchType = 'student';
+            }
           }
-        }
 
-        if (detections.length > 0) {
-          const { guardians: guardianMatcher, student: studentMatcher } = matchers.current;
-
-          detections.forEach(detection => {
-            let matchFound = false;
-            let currentId = '';
-            let currentRole: 'guardian' | 'student' = 'student';
-            let currentIdx = 0;
-
-            if (guardianMatcher) {
-              const bestMatch = guardianMatcher.findBestMatch(detection.descriptor);
-              if (bestMatch.label !== 'unknown') {
-                const [studentId, guardianIdx] = bestMatch.label.split('_');
-                currentId = studentId;
-                currentRole = 'guardian';
-                currentIdx = parseInt(guardianIdx);
-                matchFound = true;
-              }
+          if (!bestMatch && guardianMatcher) {
+            const guardianMatch = guardianMatcher.findBestMatch(detection.descriptor);
+            if (guardianMatch.label !== 'unknown' && guardianMatch.distance < 0.45) {
+              bestMatch = guardianMatch;
+              matchType = 'guardian';
+              const [pid, gidx] = guardianMatch.label.split('_');
+              guardianIdx = parseInt(gidx);
             }
+          }
 
-            if (!matchFound && studentMatcher) {
-              const bestMatch = studentMatcher.findBestMatch(detection.descriptor);
-              if (bestMatch.label !== 'unknown') {
-                currentId = bestMatch.label;
-                currentRole = 'student';
-                matchFound = true;
-              }
-            }
+          const confidence = 1 - (bestMatch?.distance || detection.detection.score || 0.5);
+          const normalizedConfidence = Math.min(Math.max((confidence - 0.2) * 1.5, 0), 0.99);
 
-            // 4. Debounced Match Trigger (Prevent spamming state updates)
-            if (matchFound) {
-              const matchKey = `${currentId}_${currentRole}_${currentIdx}`;
+          const isUnknown = !bestMatch;
+          if (isUnknown) {
+            playWarningBeep();
+          }
+
+          currentDetections.push({
+            label: bestMatch ? (matchType === 'student' ? 'Student' : 'Guardian') : 'Unknown',
+            confidence: normalizedConfidence,
+            isMatch: !!bestMatch,
+            box: detection.detection.box
+          });
+
+          if (matchType) {
+            const actualId = bestMatch.label.split('_')[0];
+            const entry = registry.find(r => r.id === actualId);
+            if (entry) {
+              const matchKey = `${actualId}_${matchType}_${guardianIdx || 0}`;
               const now = Date.now();
               if (matchKey !== lastMatchId || now - lastMatchTime > 3000) {
-                const matched = registry.find(p => p.id === currentId);
-                if (matched) {
-                  onMatch(matched, currentRole, currentIdx);
-                  lastMatchId = matchKey;
-                  lastMatchTime = now;
-                }
+                onMatch(entry, matchType, guardianIdx);
+                lastMatchId = matchKey;
+                lastMatchTime = now;
               }
             }
-          });
+          }
+        });
+
+        setDetectionInfo(currentDetections);
+
+        if (canvasRef.current) {
+          const ctx = canvasRef.current.getContext('2d');
+          if (ctx) ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
         }
       } catch (err) {
         console.warn("Recognition cycle error:", err);
@@ -873,53 +1087,102 @@ function Scanner({ registry, onMatch, onScanningStateChange }: {
   }, [registry, onMatch]);
 
   return (
-    <div className="w-full h-full relative bg-black group">
+    <div className="w-full h-full relative bg-slate-900 group overflow-hidden">
       <video 
         ref={videoRef} 
         autoPlay 
         muted 
         playsInline 
-        className="w-full h-full object-cover opacity-60 transition-opacity group-hover:opacity-100"
+        className="w-full h-full object-cover opacity-80 backdrop-grayscale transition-all group-hover:opacity-100 group-hover:backdrop-grayscale-0"
       />
       
-      {/* Visual Canvas Overlay */}
-      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover pointer-events-none z-10" />
+      {/* Visual Canvas Overlay (Used for size) */}
+      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-cover pointer-events-none z-10 opacity-0" />
       
-      {/* Scanner Visuals Overlay */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
-        {/* Dynamic Scan Line */}
-        <motion.div 
-          animate={{ top: ['20%', '80%', '20%'] }}
-          transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
-          className="absolute left-1/4 right-1/4 h-[2px] bg-accent-emerald shadow-[0_0_15px_#10b981] z-20"
-        />
-
-        {/* Identity Bracket */}
-        <div className="w-[240px] h-[300px] border-2 border-accent-emerald/40 rounded-[60px] relative z-10 transition-colors group-hover:border-accent-emerald/80 group-hover:shadow-[0_0_30px_rgba(16,185,129,0.2)]">
-          {/* Corner Elements */}
-          <div className="absolute -top-1 -left-1 w-10 h-10 border-t-4 border-l-4 border-accent-emerald rounded-tl-3xl shadow-[0_0_10px_#10b981]" />
-          <div className="absolute -top-1 -right-1 w-10 h-10 border-t-4 border-r-4 border-accent-emerald rounded-tr-3xl shadow-[0_0_10px_#10b981]" />
-          <div className="absolute -bottom-1 -left-1 w-10 h-10 border-b-4 border-l-4 border-accent-emerald rounded-bl-3xl shadow-[0_0_10px_#10b981]" />
-          <div className="absolute -bottom-1 -right-1 w-10 h-10 border-b-4 border-r-4 border-accent-emerald rounded-br-3xl shadow-[0_0_10px_#10b981]" />
-          
-          <div className="absolute bottom-6 left-0 right-0 text-center">
-             <p className="text-[10px] font-mono text-accent-emerald tracking-widest uppercase">Target Locked</p>
+      <div className="absolute top-4 left-4 z-20 flex flex-col space-y-2">
+        <div className="px-3 py-1 bg-white/90 backdrop-blur-md rounded-full border border-black/5 text-[9px] font-black tracking-widest text-slate-800 uppercase shadow-sm">
+          {cameraLabel}
+        </div>
+        {!isCameraActive && (
+          <div className="flex flex-col space-y-1">
+            <div className="px-3 py-1 bg-red-500/90 backdrop-blur-md rounded-full text-[9px] font-black text-white uppercase tracking-wider">
+              OFFLINE
+            </div>
+            {errorMsg && (
+              <p className="text-[7px] text-red-200 font-mono bg-black/60 px-2 py-1 rounded-md leading-tight w-28 backdrop-blur-sm">
+                {errorMsg}
+              </p>
+            )}
           </div>
-        </div>
-
-        {/* Technical HUD elements */}
-        <div className="absolute top-0 left-0 right-0 bottom-0 pointer-events-none font-mono opacity-20">
-          <div className="absolute top-10 left-10 text-[8px] uppercase">LAT: 32.4491<br/>LONG: -110.8711</div>
-          <div className="absolute bottom-10 right-10 text-[8px] text-right uppercase">NODE: AS-772<br/>STMS: ACTIVE</div>
-        </div>
+        )}
       </div>
-      
-      <div className="absolute bottom-6 left-6 right-6 flex items-center justify-between">
-        <div className="bg-black/60 backdrop-blur-md px-4 py-2 rounded-lg border border-white/10 flex items-center space-x-2">
-          <div className="w-1.5 h-1.5 bg-red-600 rounded-full animate-pulse" />
-          <p className="text-[9px] font-black tracking-widest text-white uppercase">Biometric Stream: Encryption Active</p>
+
+      <AnimatePresence>
+        {detectionInfo.map((det, i) => (
+          <motion.div
+            key={i}
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="absolute border-2 pointer-events-none transition-all duration-150 ease-out"
+            style={{
+              left: `${(det.box.x / (videoRef.current?.videoWidth || 1)) * 100}%`,
+              top: `${(det.box.y / (videoRef.current?.videoHeight || 1)) * 100}%`,
+              width: `${(det.box.width / (videoRef.current?.videoWidth || 1)) * 100}%`,
+              height: `${(det.box.height / (videoRef.current?.videoHeight || 1)) * 100}%`,
+              borderColor: det.isMatch ? '#10b981' : (det.label === 'Unknown' ? '#ef4444' : 'rgba(255,255,255,0.4)'),
+              borderStyle: 'solid',
+              boxShadow: det.isMatch 
+                ? '0 0 0 4px rgba(16,185,129,0.2)' 
+                : (det.label === 'Unknown' ? '0 0 0 4px rgba(239,68,68,0.2)' : 'none'),
+              borderRadius: '16px'
+            }}
+          >
+            {det.isMatch ? (
+              <motion.div 
+                initial={{ y: 10, opacity: 0 }}
+                animate={{ y: 0, opacity: 1 }}
+                className="absolute -top-10 left-0 bg-accent-emerald text-white text-[9px] font-extrabold uppercase px-3 py-1.5 rounded-full whitespace-nowrap shadow-lg flex items-center space-x-2"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>{det.label} Verified</span>
+              </motion.div>
+            ) : (
+               <div className={cn(
+                 "absolute -top-8 left-0 text-white text-[8px] font-black uppercase tracking-widest px-2.5 py-1 rounded-full backdrop-blur-md flex items-center space-x-2 transition-colors",
+                 det.label === 'Unknown' ? "bg-red-500 shadow-lg text-white" : "bg-black/40 text-white/90"
+               )}>
+                 <div className={cn("w-1.5 h-1.5 rounded-full animate-pulse", det.label === 'Unknown' ? "bg-white" : "bg-white/50")} />
+                 <span>{det.label === 'Unknown' ? "Unknown" : "Scanning"}</span>
+               </div>
+            )}
+            {det.isMatch && (
+              <motion.div 
+                animate={{ opacity: [0, 0.4, 0] }}
+                transition={{ repeat: Infinity, duration: 1 }}
+                className="absolute inset-0 bg-accent-emerald/20 rounded-[14px]"
+              />
+            )}
+          </motion.div>
+        ))}
+      </AnimatePresence>
+
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none overflow-hidden">
+        {/* Simplified Scan Line */}
+        {!detectionInfo.some(d => d.isMatch) && (
+          <motion.div 
+            animate={{ top: ['10%', '90%', '10%'] }}
+            transition={{ repeat: Infinity, duration: 3.5, ease: "linear" }}
+            className="absolute left-0 right-0 h-px bg-white/20 z-20"
+          />
+        )}
+      </div>
+
+      <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between z-20">
+        <div className="bg-white/10 backdrop-blur-md px-3 py-1 rounded-full border border-white/5 flex items-center space-x-2">
+          <div className={cn("w-1.5 h-1.5 rounded-full", isCameraActive ? "bg-accent-emerald animate-pulse" : "bg-red-500")} />
+          <p className="text-[8px] font-bold tracking-widest text-white/80 uppercase">Active Stream</p>
         </div>
-        <p className="text-[10px] font-mono text-accent-emerald bg-black/60 backdrop-blur-md px-3 py-1 rounded border border-accent-emerald/20">98.4% Confidence</p>
       </div>
     </div>
   );
@@ -1098,9 +1361,9 @@ function RegisterForm({ onEnroll }: { onEnroll: (entry: RegistryEntry) => void }
     <div className="glass-card overflow-hidden">
        <div className="p-6 sm:p-10 border-b border-surface-border">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-2">
-          <h2 className="text-2xl sm:text-3xl font-black text-white italic tracking-tighter flex items-center space-x-3 uppercase">
+          <h2 className="text-xl sm:text-2xl font-extrabold text-text-primary tracking-tight flex items-center space-x-3 uppercase">
             <UserPlus className="w-6 h-6 sm:w-8 sm:h-8 text-accent-emerald" />
-            <span>SECURE BIOMETRIC ENROLLMENT</span>
+            <span>Secure Biometric Enrollment</span>
           </h2>
           <div className="status-badge text-accent-emerald bg-accent-emerald-alpha self-start sm:self-center">Multi-Guardian v3.0</div>
         </div>
@@ -1151,7 +1414,7 @@ function RegisterForm({ onEnroll }: { onEnroll: (entry: RegistryEntry) => void }
                 <button 
                   onClick={() => setStep('student')}
                   disabled={!formData.childName || !formData.scholarNo}
-                  className="w-full py-5 bg-white text-black rounded-xl font-black text-xs tracking-[0.2em] uppercase transition-all disabled:opacity-30 cursor-pointer"
+                  className="w-full py-5 bg-text-primary text-background rounded-xl font-black text-xs tracking-[0.2em] uppercase transition-all disabled:opacity-30 cursor-pointer shadow-lg"
                 >
                   Proceed to Biometrics
                 </button>
@@ -1160,8 +1423,8 @@ function RegisterForm({ onEnroll }: { onEnroll: (entry: RegistryEntry) => void }
 
             {step === 'student' && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
-                <div className="p-6 bg-accent-emerald/5 border border-accent-emerald/20 rounded-xl">
-                  <h4 className="text-sm font-bold text-white mb-2 uppercase italic tracking-tighter">Phase 1: Student Capture</h4>
+                <div className="p-6 bg-slate-50 border border-slate-100 rounded-2xl">
+                  <h4 className="text-sm font-bold text-text-primary mb-2 uppercase tracking-tight">Step 1: Student Capture</h4>
                   <p className="text-xs text-text-secondary">Position the student within the frame for biometric enrollment.</p>
                 </div>
                 
@@ -1169,24 +1432,24 @@ function RegisterForm({ onEnroll }: { onEnroll: (entry: RegistryEntry) => void }
                   <button 
                     onClick={handleCapture}
                     disabled={!isCapturing || isProcessing}
-                    className="w-full py-5 bg-accent-emerald text-black rounded-xl font-black text-xs tracking-[0.2em] uppercase transition-all flex items-center justify-center space-x-2"
+                    className="w-full py-5 bg-accent-emerald text-white rounded-xl font-black text-xs tracking-[0.2em] uppercase transition-all flex items-center justify-center space-x-2 shadow-lg"
                   >
                     {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <span>Capture Bio-Signature</span>}
                   </button>
                 ) : (
                   <div className="space-y-4">
-                    <div className="flex items-center space-x-3 p-4 bg-white/5 rounded-xl border border-white/10">
-                      <div className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0">
+                    <div className="flex items-center space-x-3 p-4 bg-surface rounded-xl border border-surface-border">
+                      <div className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0 border border-surface-border">
                         <img src={studentPhoto!} alt="Student" />
                       </div>
                       <div>
                         <p className="text-[10px] font-black uppercase tracking-widest text-accent-emerald">SIGNATURE CAPTURED</p>
-                        <p className="text-xs text-white font-bold uppercase">{formData.childName}</p>
+                        <p className="text-xs text-text-primary font-bold uppercase">{formData.childName}</p>
                       </div>
                     </div>
                     <button 
                       onClick={() => setStep('guardians')}
-                      className="w-full py-5 bg-white text-black rounded-xl font-black text-xs tracking-[0.2em] uppercase hover:bg-accent-emerald transition-all"
+                      className="w-full py-5 bg-text-primary text-background rounded-xl font-black text-xs tracking-[0.2em] uppercase hover:bg-accent-emerald transition-all"
                     >
                       Authorize Guardians
                     </button>
@@ -1198,14 +1461,14 @@ function RegisterForm({ onEnroll }: { onEnroll: (entry: RegistryEntry) => void }
             {step === 'guardians' && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
                 <div className="space-y-4">
-                  <h4 className="text-xs font-black text-white uppercase italic tracking-widest px-1">Authorized Guardians ({enrolledGuardians.length})</h4>
+                  <h4 className="text-xs font-bold text-text-primary uppercase tracking-widest px-1">Authorized Guardians ({enrolledGuardians.length})</h4>
                   <div className="space-y-2">
                     {enrolledGuardians.map((g, i) => (
-                      <div key={i} className="flex items-center justify-between p-3 bg-white/5 border border-white/5 rounded-lg group">
+                      <div key={i} className="flex items-center justify-between p-3 bg-surface border border-surface-border rounded-lg group">
                         <div className="flex items-center space-x-3">
-                          <img src={g.photo} className="w-8 h-8 rounded border border-white/10" alt="Guardian" />
+                          <img src={g.photo} className="w-8 h-8 rounded border border-surface-border" alt="Guardian" />
                           <div>
-                            <p className="text-[10px] font-bold text-white uppercase">{g.name}</p>
+                            <p className="text-[10px] font-bold text-text-primary uppercase">{g.name}</p>
                             <p className="text-[8px] font-black text-accent-emerald uppercase tracking-widest">{g.role}</p>
                           </div>
                         </div>
@@ -1245,16 +1508,16 @@ function RegisterForm({ onEnroll }: { onEnroll: (entry: RegistryEntry) => void }
                     )}
                   </div>
                 ) : (
-                  <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-5 p-6 bg-white/3 border border-white/10 rounded-2xl">
+                  <motion.div initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} className="space-y-5 p-6 bg-surface border border-surface-border rounded-2xl shadow-sm">
                      <div className="flex justify-between items-center mb-2">
                        <p className="text-[10px] font-black text-accent-emerald uppercase tracking-widest">Enrolling: {currentGuardianRole}</p>
-                       <button onClick={() => setCurrentGuardianRole(null)} className="text-[8px] font-bold text-white/40 uppercase hover:text-white">Cancel</button>
+                       <button onClick={() => setCurrentGuardianRole(null)} className="text-[8px] font-bold text-text-secondary uppercase hover:text-text-primary transition-colors cursor-pointer">Cancel</button>
                      </div>
                      <InputGroup label={`${currentGuardianRole} Full Name`} value={currentGuardianName} onChange={setCurrentGuardianName} />
                      <button 
                       onClick={handleCapture}
                       disabled={!isCapturing || isProcessing}
-                      className="w-full py-4 bg-white text-black rounded-xl font-black text-[10px] tracking-[0.2em] uppercase transition-all flex items-center justify-center space-x-2"
+                      className="w-full py-4 bg-text-primary text-background rounded-xl font-black text-[10px] tracking-[0.2em] uppercase transition-all flex items-center justify-center space-x-2 shadow-lg"
                     >
                       {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <span>Capture {currentGuardianRole} Face</span>}
                     </button>
@@ -1265,19 +1528,19 @@ function RegisterForm({ onEnroll }: { onEnroll: (entry: RegistryEntry) => void }
           </div>
         </div>
 
-        <div className="bg-black/40 p-6 sm:p-10 flex flex-col items-center justify-center transition-all">
+        <div className="bg-background/20 p-6 sm:p-10 flex flex-col items-center justify-center transition-all">
           {!isCapturing && step !== 'details' ? (
             <button 
               onClick={startCamera}
-              className="w-full aspect-[4/5] sm:aspect-square lg:aspect-[4/5] border-2 border-dashed border-white/10 rounded-3xl hover:border-accent-emerald/40 hover:bg-accent-emerald/5 transition-all group flex flex-col items-center justify-center cursor-pointer"
+              className="w-full aspect-[4/5] sm:aspect-square lg:aspect-[4/5] border-2 border-dashed border-surface-border rounded-3xl hover:border-accent-emerald/40 hover:bg-accent-emerald/5 transition-all group flex flex-col items-center justify-center cursor-pointer bg-surface/30"
             >
-              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-white/5 flex items-center justify-center group-hover:bg-accent-emerald/20 transition-all">
-                <Camera className="w-6 h-6 sm:w-8 sm:h-8 text-white/20 group-hover:text-accent-emerald" />
+              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-surface flex items-center justify-center group-hover:bg-accent-emerald/20 transition-all border border-surface-border shadow-sm">
+                <Camera className="w-6 h-6 sm:w-8 sm:h-8 text-text-secondary group-hover:text-accent-emerald" />
               </div>
-              <p className="text-[9px] sm:text-[11px] font-black text-text-secondary mt-6 group-hover:text-white uppercase tracking-[0.25em]">ACTIVATE SENSOR</p>
+              <p className="text-[9px] sm:text-[11px] font-black text-text-secondary mt-6 group-hover:text-text-primary uppercase tracking-[0.25em]">ACTIVATE SENSOR</p>
             </button>
           ) : isCapturing ? (
-            <div className="relative w-full aspect-[4/5] sm:aspect-square lg:aspect-[4/5] rounded-[2.5rem] overflow-hidden bg-black shadow-2xl ring-4 ring-white/5 ring-inset ring-offset-8 ring-offset-background group">
+            <div className="relative w-full aspect-[4/5] sm:aspect-square lg:aspect-[4/5] rounded-[2.5rem] overflow-hidden bg-slate-900 shadow-2xl ring-4 ring-surface-border ring-inset ring-offset-8 ring-offset-background group">
               <video ref={videoRef} autoPlay muted className="w-full h-full object-cover" />
               <div className="absolute inset-x-0 top-0 bottom-0 flex items-center justify-center pointer-events-none">
                  <div className="w-32 h-48 sm:w-48 sm:h-64 border-2 border-accent-emerald/20 rounded-[80px] shadow-[0_0_100px_rgba(16,185,129,0.1)]" />
@@ -1304,7 +1567,7 @@ function InputGroup({ label, value, onChange }: { label: string; value: string; 
         value={value}
         onChange={e => onChange(e.target.value)}
         required
-        className="w-full bg-white/3 border border-white/10 rounded-xl px-5 py-4 text-sm font-bold text-white placeholder:text-text-secondary/30 placeholder:font-normal focus:ring-1 focus:ring-accent-emerald/50 focus:border-accent-emerald outline-none transition-all"
+        className="w-full bg-surface border border-surface-border rounded-xl px-5 py-4 text-sm font-bold text-text-primary placeholder:text-text-secondary/30 placeholder:font-normal focus:ring-1 focus:ring-accent-emerald/50 focus:border-accent-emerald outline-none transition-all shadow-sm"
         placeholder={`ENTER ${label.toUpperCase()}...`}
       />
     </div>
@@ -1367,7 +1630,7 @@ function AdminTab({
         className="max-w-md mx-auto mt-20 p-10 glass-card text-center"
       >
         <Lock className="w-12 h-12 text-accent-emerald mx-auto mb-6" />
-        <h2 className="text-xl font-black text-text-primary italic uppercase tracking-tighter mb-2">ADMIN ACCESS</h2>
+        <h2 className="text-xl font-extrabold text-text-primary uppercase tracking-tight mb-2">Admin Access</h2>
         <p className="text-xs text-text-secondary mb-8 uppercase tracking-widest">Master Credentials Required</p>
         
         <form onSubmit={(e) => { e.preventDefault(); onLogin(pass); }} className="space-y-4">
@@ -1411,8 +1674,8 @@ function AdminTab({
     >
       <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-6">
         <div className="text-center xl:text-left">
-          <h2 className="text-2xl sm:text-3xl font-black text-text-primary italic tracking-tighter uppercase mb-1">REGISTRY CONTROL</h2>
-          <p className="text-text-secondary text-[10px] sm:text-xs font-medium tracking-tight uppercase italic">Distributed Biometric Ledger Management</p>
+          <h2 className="text-2xl sm:text-3xl font-extrabold text-text-primary tracking-tight uppercase mb-1">Registry Control</h2>
+          <p className="text-text-secondary text-[10px] sm:text-xs font-medium tracking-tight uppercase">Authorized Student & Guardian Records</p>
         </div>
         <div className="flex flex-wrap items-center justify-center xl:justify-end gap-2 sm:gap-3">
            <button 
@@ -1481,7 +1744,7 @@ function AdminTab({
 
            <button 
             onClick={onDownload}
-            className="bg-accent-emerald text-black px-4 sm:px-6 py-2 sm:py-3 rounded-xl shadow-lg shadow-accent-emerald/20 text-[10px] sm:text-[11px] font-black uppercase tracking-widest flex items-center space-x-2 transition-all cursor-pointer"
+            className="bg-accent-emerald text-white px-4 sm:px-6 py-2 sm:py-3 rounded-xl shadow-lg shadow-accent-emerald/20 text-[10px] sm:text-[11px] font-black uppercase tracking-widest flex items-center space-x-2 transition-all cursor-pointer"
           >
             <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             <span>Export PDF</span>
@@ -1515,7 +1778,7 @@ function AdminTab({
             <div className="hidden lg:block overflow-x-auto">
               <table className="w-full text-left">
                 <thead>
-                  <tr className="border-b border-white/5 bg-white/2">
+                   <tr className="border-b border-surface-border bg-background">
                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-text-secondary">Profiles</th>
                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-text-secondary">Student Detail</th>
                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-text-secondary">Authorized Guardian</th>
@@ -1524,16 +1787,16 @@ function AdminTab({
                     <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-text-secondary text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/2">
+                <tbody className="divide-y divide-surface-border">
                   {filteredRegistry.map((person) => (
-                    <tr key={person.id} className="hover:bg-white/1 transition-all group">
+                    <tr key={person.id} className="hover:bg-accent-emerald-alpha transition-all group">
                       <td className="px-6 py-5">
                         <div className="flex -space-x-2">
-                            <div className="w-10 h-10 rounded-lg border-2 border-surface bg-white/5 overflow-hidden ring-2 ring-black">
+                            <div className="w-10 h-10 rounded-lg border-2 border-surface bg-background overflow-hidden ring-2 ring-surface-border">
                               {person.studentPhoto ? <img src={person.studentPhoto} alt="Student" className="w-full h-full object-cover" /> : null}
                             </div>
                             {person.guardians?.map((g, gi) => (
-                              <div key={gi} className="w-10 h-10 rounded-lg border-2 border-surface bg-white/5 overflow-hidden ring-2 ring-black" title={g.name}>
+                              <div key={gi} className="w-10 h-10 rounded-lg border-2 border-surface bg-background overflow-hidden ring-2 ring-surface-border" title={g.name}>
                                 {g.photo ? <img src={g.photo} alt={g.role} className="w-full h-full object-cover" /> : null}
                               </div>
                             ))}
@@ -1555,7 +1818,7 @@ function AdminTab({
                         </div>
                       </td>
                       <td className="px-6 py-5">
-                        <span className="text-xs font-mono text-white/60">{person.classSec}</span>
+                        <span className="text-xs font-mono text-text-secondary">{person.classSec}</span>
                       </td>
                       <td className="px-6 py-5">
                         <span className="text-xs font-mono text-accent-emerald">{person.scholarNo}</span>
@@ -1642,7 +1905,7 @@ function AdminTab({
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-0.5">
                       <span className="text-[8px] font-black uppercase text-text-secondary tracking-widest">Student</span>
-                      <p className="text-sm font-bold text-text-primary italic uppercase">{person.childName}</p>
+                      <p className="text-sm font-bold text-text-primary uppercase">{person.childName}</p>
                     </div>
                     <div className="space-y-0.5">
                       <span className="text-[8px] font-black uppercase text-text-secondary tracking-widest">ID / Class</span>
@@ -1678,7 +1941,7 @@ function AdminTab({
               <ShieldCheck className="w-6 h-6" />
             </div>
             <div>
-              <h3 className="text-xl font-black text-white italic uppercase">System Configuration</h3>
+              <h3 className="text-xl font-bold text-text-primary uppercase">System Configuration</h3>
               <p className="text-[10px] text-text-secondary uppercase font-bold tracking-widest">Core Sentinel Node A-4</p>
             </div>
           </div>

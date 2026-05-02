@@ -24,4 +24,5 @@ export interface PickupLog {
   scholarNo: string;
   classSec: string;
   timestamp: number;
+  cameraLabel?: string;
 }
