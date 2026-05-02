@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import * as faceapi from 'face-api.js';
+import * as faceapi from '@vladmandic/face-api';
 import { 
   Camera, UserPlus, ShieldCheck, History, Loader2, Search, 
   CheckCircle2, UserCircle, Download, Trash2, Lock,

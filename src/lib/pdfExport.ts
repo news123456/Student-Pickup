@@ -98,7 +98,7 @@ export const exportTechnicalDoc = () => {
   const sections = [
     {
       title: '1. SYSTEM ARCHITECTURE (EDGE AI)',
-      content: 'GuardLink utilizes client-side Convolutional Neural Networks (CNN) for face-api.js feature extraction. This ensures zero-latency matching and eliminates the need for expensive server-side compute infrastructure.'
+      content: 'GuardLink utilizes client-side Convolutional Neural Networks (CNN) for @vladmandic/face-api feature extraction. This ensures zero-latency matching and eliminates the need for expensive server-side compute infrastructure.'
     },
     {
       title: '2. BIOMETRIC SIGNATURES',
