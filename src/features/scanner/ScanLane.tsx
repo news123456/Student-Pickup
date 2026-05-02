@@ -3,13 +3,13 @@ import React, {
 } from 'react';
 import * as faceapi from 'face-api.js';
 import { motion, AnimatePresence } from 'motion/react';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, XCircle } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useRegistryStore } from '../../store/registryStore';
 import { useScannerStore } from '../../store/scannerStore';
 import { useHistoryStore } from '../../store/historyStore';
 import { useAudio } from '../../hooks/useAudio';
-import type { RegistryEntry, WorkerMatch, LaneState, PickupLog } from '../../types';
+import type { RegistryEntry, WorkerMatch, LaneState } from '../../types';
 
 // Singleton worker shared across all lanes
 let _worker: Worker | null = null;
@@ -36,7 +36,6 @@ interface Props {
 
 export const ScanLane = memo(({ slot, deviceId, cameraLabel }: Props) => {
   const registry = useRegistryStore((s) => s.registry);
-  const updateLane = useScannerStore((s) => s.updateLane);
   const laneState = useScannerStore((s) => s.laneStates[slot]);
   const addLog = useHistoryStore((s) => s.addLog);
   const { playWarningBeep } = useAudio();
@@ -70,7 +69,8 @@ export const ScanLane = memo(({ slot, deviceId, cameraLabel }: Props) => {
       setErrorMsg(null);
       try {
         if (retry === 0) {
-          const idx = parseInt(cameraLabel.match(/\d+/)?.[0] ?? '0', 10);
+          const idxMatch = /\d+/.exec(cameraLabel);
+          const idx = Number.parseInt(idxMatch?.[0] ?? '0', 10);
           await new Promise<void>((r) => setTimeout(r, idx * 600));
         }
         streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -110,8 +110,9 @@ export const ScanLane = memo(({ slot, deviceId, cameraLabel }: Props) => {
       if (matchKey === lastMatchRef.current.key && now - lastMatchRef.current.time < 3000) return;
       lastMatchRef.current = { key: matchKey, time: now };
 
-      // Read current lane state synchronously — no closure over stale state
       const lane = useScannerStore.getState().laneStates[slot];
+      if (!lane.isScanning) return;
+
       const isNewEntry = !lane.matchedEntry || lane.matchedEntry.id !== entry.id;
       const newEntry = isNewEntry ? entry : lane.matchedEntry!;
       const newStatus: LaneState['matchStatus'] = isNewEntry
@@ -126,9 +127,12 @@ export const ScanLane = memo(({ slot, deviceId, cameraLabel }: Props) => {
             guardianIndex: type === 'guardian' ? guardianIdx : lane.matchStatus.guardianIndex,
           };
 
+      const bothVerified = newStatus.guardian && newStatus.student;
+      const wasAlreadyBoth = lane.matchStatus.guardian && lane.matchStatus.student;
+
       // Log pickup when BOTH are verified for the first time in this lane
-      if (newStatus.guardian && newStatus.student && !(lane.matchStatus.guardian && lane.matchStatus.student)) {
-        const guardian = entry.guardians[newStatus.guardianIndex!];
+      if (bothVerified && !wasAlreadyBoth) {
+        const guardian = entry.guardians[newStatus.guardianIndex ?? 0];
         addLog({
           id: crypto.randomUUID(),
           studentName: entry.childName,
@@ -141,13 +145,19 @@ export const ScanLane = memo(({ slot, deviceId, cameraLabel }: Props) => {
         });
       }
 
-      // Update scanner store after addLog — no nesting
+      // Update lane state
       useScannerStore.getState().updateLane(slot, { matchedEntry: newEntry, matchStatus: newStatus });
+
+      // Auto-stop scan when both faces verified
+      if (bothVerified && !wasAlreadyBoth) {
+        useScannerStore.getState().stopScanLane(slot, 'verified');
+        setOverlays([]);
+      }
     },
     [slot, addLog]
   );
 
-  // Face detection + worker dispatch loop
+  // Face detection + worker dispatch loop — only active when isScanning
   useEffect(() => {
     if (registry.length === 0) return;
     const worker = getWorker();
@@ -166,7 +176,6 @@ export const ScanLane = memo(({ slot, deviceId, cameraLabel }: Props) => {
           const entry = registry.find((r) => r.id === m.entryId);
           if (entry) handleMatch(entry, m);
         }
-        // Warn on unknown faces
         if (m.type === 'unknown' && i === 0) playWarningBeep();
       });
     };
@@ -174,7 +183,10 @@ export const ScanLane = memo(({ slot, deviceId, cameraLabel }: Props) => {
     worker.addEventListener('message', onWorkerMsg);
 
     const loop = async (time: number) => {
-      if (document.visibilityState !== 'visible' || isProcessing) {
+      // Skip processing if this lane is not actively scanning
+      const { laneStates } = useScannerStore.getState();
+      if (!laneStates[slot]?.isScanning || document.visibilityState !== 'visible' || isProcessing) {
+        if (!laneStates[slot]?.isScanning) setOverlays([]);
         rafId = requestAnimationFrame(loop);
         return;
       }
@@ -190,25 +202,23 @@ export const ScanLane = memo(({ slot, deviceId, cameraLabel }: Props) => {
         const dets = await faceapi
           .detectAllFaces(
             videoRef.current,
-            new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.6 })
+            new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })
           )
           .withFaceLandmarks()
           .withFaceDescriptors();
 
-        const newOverlays: DetOverlay[] = dets.map((d) => ({
+        setOverlays(dets.map((d) => ({
           label: 'Scanning',
           isMatch: false,
           box: d.detection.box,
-        }));
-        setOverlays(newOverlays);
+        })));
 
         if (dets.length > 0 && !pendingRef.current) {
           pendingRef.current = true;
-          const descriptors = dets.map((d) => Array.from(d.descriptor));
           worker.postMessage({
             type: 'match_batch',
             requestId: `${slot}_${Date.now()}`,
-            descriptors,
+            descriptors: dets.map((d) => Array.from(d.descriptor)),
           });
         }
       } catch {
@@ -226,6 +236,9 @@ export const ScanLane = memo(({ slot, deviceId, cameraLabel }: Props) => {
     };
   }, [registry, slot, handleMatch, playWarningBeep]);
 
+  const isScanning = laneState?.isScanning ?? false;
+  const scanResult = laneState?.scanResult ?? null;
+
   return (
     <div className="w-full h-full relative bg-slate-900 group overflow-hidden">
       <video
@@ -240,7 +253,7 @@ export const ScanLane = memo(({ slot, deviceId, cameraLabel }: Props) => {
       <AnimatePresence>
         {overlays.map((det, i) => (
           <motion.div
-            key={i}
+            key={`det_${slot}_${i}`}
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
@@ -276,14 +289,57 @@ export const ScanLane = memo(({ slot, deviceId, cameraLabel }: Props) => {
         ))}
       </AnimatePresence>
 
-      {/* Scan line when idle */}
-      {overlays.length === 0 && (
+      {/* Scan line — only when actively scanning with no faces detected */}
+      {isScanning && overlays.length === 0 && (
         <motion.div
           animate={{ top: ['10%', '90%', '10%'] }}
           transition={{ repeat: Infinity, duration: 3.5, ease: 'linear' }}
-          className="absolute left-0 right-0 h-px bg-white/20 z-20 pointer-events-none"
+          className="absolute left-0 right-0 h-px bg-emerald-400/40 z-20 pointer-events-none"
         />
       )}
+
+      {/* Idle overlay — when not scanning and no result */}
+      {!isScanning && !scanResult && (
+        <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-10 pointer-events-none">
+          <p className="text-[10px] font-black uppercase tracking-widest text-white/50">
+            Press Start to Scan
+          </p>
+        </div>
+      )}
+
+      {/* Scan result overlay */}
+      <AnimatePresence>
+        {scanResult && (
+          <motion.div
+            key={`result_${slot}`}
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            className={cn(
+              'absolute inset-0 flex flex-col items-center justify-center z-30 pointer-events-none',
+              scanResult === 'verified' ? 'bg-emerald-900/70' : 'bg-red-900/70'
+            )}
+          >
+            {scanResult === 'verified' ? (
+              <>
+                <CheckCircle2 className="w-14 h-14 text-emerald-400 mb-3 drop-shadow-lg" />
+                <p className="text-[13px] font-black uppercase tracking-[0.25em] text-white">Verified</p>
+                <p className="text-[9px] font-bold uppercase tracking-widest text-emerald-300 mt-1">
+                  Student & Guardian Cleared
+                </p>
+              </>
+            ) : (
+              <>
+                <XCircle className="w-14 h-14 text-red-400 mb-3 drop-shadow-lg" />
+                <p className="text-[13px] font-black uppercase tracking-[0.25em] text-white">Incomplete</p>
+                <p className="text-[9px] font-bold uppercase tracking-widest text-red-300 mt-1">
+                  Scan stopped before verification
+                </p>
+              </>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Camera label */}
       <div className="absolute top-4 left-4 z-20 flex flex-col space-y-2">
@@ -305,8 +361,8 @@ export const ScanLane = memo(({ slot, deviceId, cameraLabel }: Props) => {
       </div>
 
       {/* Lane status badge */}
-      {laneState?.matchedEntry && (
-        <div className="absolute top-4 right-20 z-20">
+      {laneState?.matchedEntry && isScanning && (
+        <div className="absolute top-4 right-4 z-20">
           <div className={cn(
             'px-2 py-1 rounded-full text-[8px] font-black uppercase tracking-widest',
             laneState.matchStatus.guardian && laneState.matchStatus.student
@@ -321,10 +377,18 @@ export const ScanLane = memo(({ slot, deviceId, cameraLabel }: Props) => {
       {/* Active stream indicator */}
       <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between z-20">
         <div className="bg-white/10 backdrop-blur-md px-3 py-1 rounded-full border border-white/5 flex items-center space-x-2">
-          <div className={cn('w-1.5 h-1.5 rounded-full', isCameraActive ? 'bg-accent-emerald animate-pulse' : 'bg-red-500')} />
-          <p className="text-[8px] font-bold tracking-widest text-white/80 uppercase">
-            {isCameraActive ? 'Active Stream' : 'No Signal'}
-          </p>
+          {(() => {
+            let dotColor = 'bg-red-500';
+            let label = 'No Signal';
+            if (isCameraActive && isScanning) { dotColor = 'bg-accent-emerald animate-pulse'; label = 'Scanning...'; }
+            else if (isCameraActive) { dotColor = 'bg-white/40'; label = 'Ready'; }
+            return (
+              <>
+                <div className={cn('w-1.5 h-1.5 rounded-full', dotColor)} />
+                <p className="text-[8px] font-bold tracking-widest text-white/80 uppercase">{label}</p>
+              </>
+            );
+          })()}
         </div>
       </div>
     </div>

@@ -47,6 +47,8 @@ export interface LaneState {
     student: boolean;
     guardianIndex?: number;
   };
+  isScanning: boolean;
+  scanResult: 'verified' | 'incomplete' | null;
 }
 
 export interface DetectionOverlay {

@@ -392,7 +392,7 @@ export default function AdminView() {
           </div>
 
           {/* PDF exports */}
-          <div className="glass-card p-6 sm:p-8 space-y-4 md:col-span-2">
+          {/* <div className="glass-card p-6 sm:p-8 space-y-4 md:col-span-2">
             <h3 className="text-sm font-black text-text-primary uppercase tracking-widest">Documentation Exports</h3>
             <div className="flex flex-wrap gap-3">
               <button onClick={() => exportRegistryToPDF(registry)} className="flex items-center space-x-2 px-4 py-2 bg-surface hover:bg-white/10 border border-surface-border rounded-xl text-[10px] font-black text-text-primary uppercase transition-all cursor-pointer">
@@ -405,7 +405,7 @@ export default function AdminView() {
                 <FileJson className="w-3.5 h-3.5" /><span>Presentation</span>
               </button>
             </div>
-          </div>
+          </div> */}
         </div>
       )}
     </motion.div>

@@ -51,10 +51,10 @@ function bestMatch(
 }
 
 function matchOne(descriptor: number[]): WorkerMatch {
-  const sm = bestMatch(descriptor, studentLabels, 0.45);
+  const sm = bestMatch(descriptor, studentLabels, 0.6);
   if (sm) return { type: 'student', entryId: sm.id, distance: sm.distance };
 
-  const gm = bestMatch(descriptor, guardianLabels, 0.45);
+  const gm = bestMatch(descriptor, guardianLabels, 0.6);
   if (gm) {
     const [pid, gidxStr] = gm.id.split('_');
     return {
