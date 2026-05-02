@@ -12,6 +12,7 @@ import {
 import { cn } from './lib/utils';
 import { useUIStore } from './store/uiStore';
 import { useSettingsStore } from './store/settingsStore';
+import { useLicenseStore } from './store/licenseStore';
 import { useFaceModels } from './hooks/useFaceModels';
 import { useCamera } from './hooks/useCamera';
 import { useSocketSync } from './hooks/useSocketSync';
@@ -78,6 +79,7 @@ export default function App() {
   const setTheme = useSettingsStore((s) => s.setTheme);
   const accent = useSettingsStore((s) => s.accent);
   const setAccent = useSettingsStore((s) => s.setAccent);
+  const isLicenseValid = useLicenseStore((s) => s.isLicenseValid);
 
   // Boot-time side effects (models, cameras, socket, server data)
   useFaceModels();
@@ -93,6 +95,32 @@ export default function App() {
   useEffect(() => {
     document.documentElement.setAttribute('data-accent', accent);
   }, [accent]);
+
+  // License gate: lets the user reach the Admin tab to activate, but blocks every
+  // other tab until a valid license is present.
+  if (!isLicenseValid && isModelsLoaded && activeTab !== 'admin') {
+    return (
+      <div className="min-h-screen bg-background text-text-primary font-sans flex items-center justify-center p-6">
+        <div className="max-w-md mx-auto text-center glass-card p-10">
+          <Lock className="w-16 h-16 text-red-500 mx-auto mb-6" />
+          <h1 className="text-2xl font-extrabold text-text-primary uppercase tracking-tight mb-4">License Required</h1>
+          <p className="text-text-secondary mb-8">This application requires a valid license to operate. Open the Admin panel to activate one.</p>
+          <button
+            onClick={() => setActiveTab('admin')}
+            className="w-full py-4 bg-accent-emerald text-black rounded-xl font-black text-sm tracking-[0.2em] uppercase mb-3"
+          >
+            GO TO LICENSE ACTIVATION
+          </button>
+          <button
+            onClick={() => window.location.reload()}
+            className="w-full py-3 bg-surface text-text-secondary rounded-xl font-black text-xs tracking-[0.2em] uppercase border border-surface-border hover:border-accent-emerald transition-all"
+          >
+            REFRESH
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!isModelsLoaded) return <LoadingScreen />;
 
@@ -172,6 +200,12 @@ export default function App() {
           <div className="status-badge">
             <span className="w-1.5 h-1.5 bg-accent-emerald rounded-full mr-2 animate-pulse" />
             System Live
+          </div>
+          <div className="status-badge">
+            <span className="w-1.5 h-1.5 bg-accent-emerald rounded-full mr-2 animate-pulse" />
+            <a href='/logout' className="text-[10px] font-bold text-text-secondary hover:text-accent-emerald uppercase tracking-widest">
+              Logout
+            </a>
           </div>
 
           <LiveClock />

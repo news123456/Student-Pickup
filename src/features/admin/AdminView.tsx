@@ -2,17 +2,18 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { motion } from 'motion/react';
 import {
   Lock, Search, Database, Download, Upload, FileJson, ShieldCheck,
-  Trash2, Palette, Eye, EyeOff,
+  Trash2, Palette, Eye, EyeOff, Key, Calendar, Building,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useRegistryStore } from '../../store/registryStore';
 import { useUIStore } from '../../store/uiStore';
 import { useSettingsStore } from '../../store/settingsStore';
+import { useLicenseStore } from '../../store/licenseStore';
 import { useBackup } from '../../hooks/useBackup';
 import { exportRegistryToPDF, exportTechnicalDoc, exportPresentationDoc } from '../../lib/pdfExport';
 import type { BackupInterval, Accent } from '../../types';
 
-type AdminView = 'registry' | 'settings';
+type AdminView = 'registry' | 'settings' | 'license';
 
 export default function AdminView() {
   const registry = useRegistryStore((s) => s.registry);
@@ -29,6 +30,25 @@ export default function AdminView() {
   const setAccent = useSettingsStore((s) => s.setAccent);
   const { exportBackup, importBackup } = useBackup();
 
+  // License store
+  const isLicenseValid = useLicenseStore((s) => s.isLicenseValid);
+  const licenseMessage = useLicenseStore((s) => s.licenseMessage);
+  const isSuperadminAuthenticated = useLicenseStore((s) => s.isSuperadminAuthenticated);
+  const authenticateSuperadmin = useLicenseStore((s) => s.authenticateSuperadmin);
+  const setSuperadminPassword = useLicenseStore((s) => s.setSuperadminPassword);
+  const activateLicense = useLicenseStore((s) => s.activateLicense);
+  const validateLicenseStatus = useLicenseStore((s) => s.validateLicenseStatus);
+  const licenseKeyInput = useLicenseStore((s) => s.licenseKeyInput);
+  const setLicenseKeyInput = useLicenseStore((s) => s.setLicenseKeyInput);
+  const schoolNameInput = useLicenseStore((s) => s.schoolNameInput);
+  const setSchoolNameInput = useLicenseStore((s) => s.setSchoolNameInput);
+  const daysInput = useLicenseStore((s) => s.daysInput);
+  const setDaysInput = useLicenseStore((s) => s.setDaysInput);
+  const activationDateInput = useLicenseStore((s) => s.activationDateInput);
+  const setActivationDateInput = useLicenseStore((s) => s.setActivationDateInput);
+  const generateLicenseKey = useLicenseStore((s) => s.generateLicenseKey);
+  const logoutSuperadmin = useLicenseStore((s) => s.logoutSuperadmin);
+
   const [pass, setPass] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [view, setView] = useState<AdminView>('registry');
@@ -36,7 +56,12 @@ export default function AdminView() {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [newPassword, setNewPassword] = useState(systemSettings.systemPassword ?? '');
   const [showNewPass, setShowNewPass] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showConfirmPass, setShowConfirmPass] = useState(false);
   const [saveStatus, setSaveStatus] = useState(false);
+  const [superadminPass, setSuperadminPass] = useState('');
+  const [showSuperadminPass, setShowSuperadminPass] = useState(false);
+  const [superadminLoginError, setSuperadminLoginError] = useState(false);
 
   const filteredRegistry = useMemo(() => {
     const q = searchTerm.toLowerCase();
@@ -57,10 +82,12 @@ export default function AdminView() {
   }, [systemSettings.systemPassword, setAdminAuthenticated, setLoginError]);
 
   const handleSavePassword = useCallback(async () => {
+    if (newPassword !== confirmPassword) return;
     await setSystemSettings({ ...systemSettings, systemPassword: newPassword });
+    setConfirmPassword('');
     setSaveStatus(true);
     setTimeout(() => setSaveStatus(false), 2000);
-  }, [systemSettings, newPassword, setSystemSettings]);
+  }, [systemSettings, newPassword, confirmPassword, setSystemSettings]);
 
   const handleImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -69,6 +96,29 @@ export default function AdminView() {
     alert(ok ? 'Backup restored successfully.' : 'Failed to read backup file.');
     e.target.value = '';
   }, [importBackup]);
+
+  const handleSuperadminLogin = useCallback(() => {
+    if (authenticateSuperadmin(superadminPass)) {
+      setSuperadminLoginError(false);
+    } else {
+      setSuperadminLoginError(true);
+    }
+  }, [superadminPass, authenticateSuperadmin]);
+
+  const handleActivateLicense = useCallback(async () => {
+    const success = await activateLicense(licenseKeyInput);
+    if (success) {
+      alert('License activated successfully.');
+      validateLicenseStatus();
+    } else {
+      alert('Invalid license key.');
+    }
+  }, [licenseKeyInput, activateLicense, validateLicenseStatus]);
+
+  const handleGenerateKey = useCallback(() => {
+    const key = generateLicenseKey();
+    setLicenseKeyInput(key);
+  }, [generateLicenseKey, setLicenseKeyInput]);
 
   if (!isAuthenticated) {
     return (
@@ -132,23 +182,25 @@ export default function AdminView() {
 
         <div className="flex flex-wrap items-center justify-center xl:justify-end gap-2 sm:gap-3">
           <button
-            onClick={() => setView(view === 'registry' ? 'settings' : 'registry')}
+            onClick={() => setView(view === 'registry' ? 'settings' : view === 'settings' ? 'license' : 'registry')}
             className={cn(
               'flex items-center space-x-2 px-3 sm:px-4 py-2 sm:py-3 border rounded-xl transition-all cursor-pointer',
-              view === 'settings' ? 'bg-white text-black border-white' : 'bg-surface hover:bg-white/10 border-surface-border text-text-primary'
+              view === 'settings' ? 'bg-white text-black border-white' : view === 'license' ? 'bg-red-500 text-white border-red-500' : 'bg-surface hover:bg-white/10 border-surface-border text-text-primary'
             )}
           >
-            <Palette className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-            <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest">{view === 'registry' ? 'Settings' : 'Registry'}</span>
+            {view === 'registry' ? <Palette className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : view === 'settings' ? <Key className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <ShieldCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
+            <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest">
+              {view === 'registry' ? 'Settings' : view === 'settings' ? 'License' : 'Registry'}
+            </span>
           </button>
 
-          <div className="hidden sm:flex bg-surface p-1 rounded-xl border border-surface-border mr-2 items-center space-x-2 px-3 self-stretch">
+          {/* <div className="hidden sm:flex bg-surface p-1 rounded-xl border border-surface-border mr-2 items-center space-x-2 px-3 self-stretch">
             <Database className="w-4 h-4 text-accent-emerald opacity-50" />
             <div className="flex flex-col">
               <span className="text-[10px] font-black text-text-primary uppercase italic leading-tight">Master Database</span>
               <span className="text-[8px] font-bold text-text-secondary uppercase tracking-widest leading-tight">Persistence Tier A</span>
             </div>
-          </div>
+          </div> */}
 
           <button onClick={exportBackup} className="flex items-center space-x-2 px-3 sm:px-4 py-2 sm:py-3 bg-surface hover:bg-white/10 border border-surface-border rounded-xl transition-all cursor-pointer">
             <FileJson className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-accent-emerald" />
@@ -351,9 +403,36 @@ export default function AdminView() {
                   </button>
                 </div>
               </div>
+              <div className="space-y-2">
+                <label className="info-label px-1">Confirm Password</label>
+                <div className="relative">
+                  <input
+                    type={showConfirmPass ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className={cn(
+                      'w-full bg-surface border rounded-xl px-5 py-4 text-sm font-bold text-text-primary outline-none transition-all',
+                      confirmPassword.length > 0 && newPassword !== confirmPassword
+                        ? 'border-red-500 focus:ring-1 focus:ring-red-500/50 focus:border-red-500'
+                        : 'border-surface-border focus:ring-1 focus:ring-accent-emerald/50 focus:border-accent-emerald'
+                    )}
+                    placeholder="RE-ENTER PASSWORD..."
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPass((v) => !v)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-text-secondary hover:text-white transition-all cursor-pointer"
+                  >
+                    {showConfirmPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                {confirmPassword.length > 0 && newPassword !== confirmPassword && (
+                  <p className="text-[10px] font-bold text-red-500 uppercase tracking-widest px-1">Passwords do not match</p>
+                )}
+              </div>
               <button
                 onClick={handleSavePassword}
-                disabled={!newPassword}
+                disabled={!newPassword || !confirmPassword || newPassword !== confirmPassword}
                 className="w-full py-4 bg-accent-emerald text-black rounded-xl font-black text-xs tracking-[0.2em] uppercase disabled:opacity-30 transition-all"
               >
                 {saveStatus ? '✓ SAVED' : 'UPDATE PASSWORD'}
@@ -406,6 +485,188 @@ export default function AdminView() {
               </button>
             </div>
           </div> */}
+        </div>
+      )}
+      
+      {/* License Panel - Superadmin only */}
+      {view === 'license' && (
+        <div className="space-y-6">
+          {!isSuperadminAuthenticated ? (
+            // Superadmin login
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="max-w-md mx-auto glass-card p-8 text-center space-y-6 mt-10"
+            >
+              <Lock className="w-12 h-12 text-red-500 mx-auto" />
+              <h2 className="text-lg font-black text-text-primary uppercase tracking-tight">Superadmin Authentication</h2>
+              <p className="text-xs text-text-secondary uppercase tracking-widest">License management requires superadmin credentials</p>
+              <div className="space-y-4">
+                <div className="relative">
+                  <input
+                    type={showSuperadminPass ? 'text' : 'password'}
+                    value={superadminPass}
+                    onChange={(e) => setSuperadminPass(e.target.value)}
+                    placeholder="SUPERADMIN PASSWORD"
+                    className={cn(
+                      'w-full bg-surface border rounded-xl px-5 py-4 text-center text-sm font-black tracking-[0.2em] uppercase outline-none transition-all',
+                      superadminLoginError
+                        ? 'border-red-500 text-red-500 animate-shake'
+                        : 'border-surface-border text-text-primary focus:border-red-500'
+                    )}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSuperadminPass(!showSuperadminPass)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-text-secondary hover:text-white transition-all cursor-pointer"
+                  >
+                    {showSuperadminPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                <button
+                  onClick={handleSuperadminLogin}
+                  className="w-full py-4 bg-red-500 hover:bg-red-600 text-white rounded-xl font-black text-xs tracking-[0.2em] uppercase transition-all"
+                >
+                  AUTHENTICATE
+                </button>
+              </div>
+            </motion.div>
+          ) : (
+            // License management (superadmin authenticated)
+            <div className="grid md:grid-cols-2 gap-6">
+              {/* License activation */}
+              <div className="glass-card p-6 sm:p-8 space-y-6">
+                <h3 className="text-sm font-black text-text-primary uppercase tracking-widest flex items-center space-x-2">
+                  <Key className="w-4 h-4 text-red-500" />
+                  <span>Activate License</span>
+                </h3>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="info-label px-1">License Key</label>
+                    <input
+                      type="text"
+                      value={licenseKeyInput}
+                      onChange={(e) => setLicenseKeyInput(e.target.value)}
+                      placeholder="E.g., ABCD36502052026"
+                      className="w-full bg-surface border border-surface-border rounded-xl px-5 py-4 text-sm font-bold text-text-primary outline-none focus:ring-1 focus:ring-red-500/50 focus:border-red-500 transition-all"
+                    />
+                  </div>
+                  <button
+                    onClick={handleActivateLicense}
+                    disabled={!licenseKeyInput}
+                    className="w-full py-4 bg-red-500 text-white rounded-xl font-black text-xs tracking-[0.2em] uppercase disabled:opacity-30 transition-all hover:bg-red-600"
+                  >
+                    ACTIVATE
+                  </button>
+                </div>
+                
+                {/* License status */}
+                <div className={cn(
+                  'p-4 rounded-xl border',
+                  isLicenseValid
+                    ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                    : 'bg-red-500/10 border-red-500/30 text-red-400'
+                )}>
+                  <p className="text-xs font-bold uppercase tracking-widest">{licenseMessage}</p>
+                </div>
+              </div>
+
+              {/* License key generator */}
+              <div className="glass-card p-6 sm:p-8 space-y-6">
+                <h3 className="text-sm font-black text-text-primary uppercase tracking-widest flex items-center space-x-2">
+                  <Building className="w-4 h-4 text-amber-400" />
+                  <span>Generate Key</span>
+                </h3>
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="info-label px-1">School Name</label>
+                    <input
+                      type="text"
+                      value={schoolNameInput}
+                      onChange={(e) => setSchoolNameInput(e.target.value)}
+                      placeholder="E.g., ABC School"
+                      className="w-full bg-surface border border-surface-border rounded-xl px-5 py-4 text-sm font-bold text-text-primary outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500 transition-all"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-2">
+                      <label className="info-label px-1">Days (1-999)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="999"
+                        value={daysInput}
+                        onChange={(e) => setDaysInput(Math.min(999, Math.max(1, parseInt(e.target.value) || 1)))}
+                        className="w-full bg-surface border border-surface-border rounded-xl px-5 py-4 text-sm font-bold text-text-primary outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500 transition-all"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="info-label px-1">Date (DDMMYYYY)</label>
+                      <input
+                        type="text"
+                        value={activationDateInput}
+                        onChange={(e) => setActivationDateInput(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                        placeholder="02052026"
+                        className="w-full bg-surface border border-surface-border rounded-xl px-5 py-4 text-sm font-bold text-text-primary outline-none focus:ring-1 focus:ring-amber-500/50 focus:border-amber-500 transition-all"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleGenerateKey}
+                    disabled={!schoolNameInput || !activationDateInput || activationDateInput.length !== 8}
+                    className="w-full py-4 bg-amber-500 text-black rounded-xl font-black text-xs tracking-[0.2em] uppercase disabled:opacity-30 transition-all hover:bg-amber-600"
+                  >
+                    GENERATE KEY
+                  </button>
+                  {licenseKeyInput && (
+                    <div className="p-4 bg-surface border border-amber-500/30 rounded-xl">
+                      <p className="text-[10px] font-black text-text-secondary uppercase tracking-widest mb-2">Generated Key:</p>
+                      <p className="text-sm font-black text-amber-400 break-all font-mono">{licenseKeyInput}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Superadmin settings */}
+              <div className="glass-card p-6 sm:p-8 space-y-6 md:col-span-2">
+                <h3 className="text-sm font-black text-text-primary uppercase tracking-widest flex items-center space-x-2">
+                  <Lock className="w-4 h-4 text-purple-500" />
+                  <span>Superadmin Settings</span>
+                </h3>
+                <div className="grid md:grid-cols-2 gap-6">
+                  <div className="space-y-4">
+                    <label className="info-label px-1">Change Superadmin Password</label>
+                    <input
+                      type="password"
+                      placeholder="NEW SUPERADMIN PASSWORD"
+                      onChange={(e) => setSuperadminPass(e.target.value)}
+                      className="w-full bg-surface border border-surface-border rounded-xl px-5 py-4 text-sm font-bold text-text-primary outline-none focus:ring-1 focus:ring-purple-500/50 focus:border-purple-500 transition-all"
+                    />
+                    <button
+                      onClick={() => {
+                        setSuperadminPassword(superadminPass);
+                        setSuperadminPass('');
+                        alert('Superadmin password updated.');
+                      }}
+                      disabled={!superadminPass}
+                      className="w-full py-4 bg-purple-500 text-white rounded-xl font-black text-xs tracking-[0.2em] uppercase disabled:opacity-30 transition-all hover:bg-purple-600"
+                    >
+                      UPDATE PASSWORD
+                    </button>
+                  </div>
+                  <div className="space-y-4">
+                    <p className="info-label px-1">Actions</p>
+                    <button
+                      onClick={logoutSuperadmin}
+                      className="w-full py-4 bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl font-black text-xs tracking-[0.2em] uppercase transition-all hover:bg-red-500/30"
+                    >
+                      LOGOUT
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </motion.div>
