@@ -1,5 +1,13 @@
+// Core domain types
+
+export type GuardianRole = 'Father' | 'Mother' | 'Guardian';
+export type Accent = 'emerald' | 'blue' | 'purple' | 'amber' | 'rose';
+export type BackupInterval = 'off' | 'daily' | 'weekly';
+export type Theme = 'light' | 'dark';
+export type TabType = 'scan' | 'register' | 'history' | 'admin';
+
 export interface Guardian {
-  role: 'Father' | 'Mother' | 'Guardian';
+  role: GuardianRole;
   name: string;
   faceDescriptor: number[];
   photo?: string;
@@ -25,4 +33,46 @@ export interface PickupLog {
   classSec: string;
   timestamp: number;
   cameraLabel?: string;
+}
+
+export interface SystemSettings {
+  systemPassword?: string;
+  backupEnabled?: boolean;
+}
+
+export interface LaneState {
+  matchedEntry: RegistryEntry | null;
+  matchStatus: {
+    guardian: boolean;
+    student: boolean;
+    guardianIndex?: number;
+  };
+}
+
+export interface DetectionOverlay {
+  label: string;
+  confidence: number;
+  isMatch: boolean;
+  box: { x: number; y: number; width: number; height: number };
+}
+
+// Worker message types
+export type WorkerRequest =
+  | { type: 'init_registry'; studentLabels: LabeledDesc[]; guardianLabels: LabeledDesc[] }
+  | { type: 'match_batch'; requestId: string; descriptors: number[][] };
+
+export type WorkerResponse =
+  | { type: 'ready' }
+  | { type: 'batch_result'; requestId: string; matches: WorkerMatch[] };
+
+export interface LabeledDesc {
+  id: string;
+  descriptors: number[][];
+}
+
+export interface WorkerMatch {
+  type: 'student' | 'guardian' | 'unknown';
+  entryId?: string;
+  guardianIndex?: number;
+  distance?: number;
 }

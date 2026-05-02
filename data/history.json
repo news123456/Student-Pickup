@@ -1,0 +1,32 @@
+[
+  {
+    "id": "3eb47e74-8c1f-4bc4-b328-3efba95fc3fa",
+    "studentName": "Rakesh",
+    "guardianName": "Devendra Maurya ",
+    "guardianRole": "Guardian",
+    "scholarNo": "1001",
+    "classSec": "A20",
+    "timestamp": 1777710875167,
+    "cameraLabel": "Node 01"
+  },
+  {
+    "id": "e86e11b5-002c-4549-bfda-f8f5086b7ca2",
+    "studentName": "Rakesh",
+    "guardianName": "Devendra Maurya ",
+    "guardianRole": "Guardian",
+    "scholarNo": "1001",
+    "classSec": "A20",
+    "timestamp": 1777710834812,
+    "cameraLabel": "Node 01"
+  },
+  {
+    "id": "6959208a-5b25-47f6-86e9-e9af53b5d8df",
+    "studentName": "Rakesh",
+    "guardianName": "Devendra Maurya ",
+    "guardianRole": "Guardian",
+    "scholarNo": "1001",
+    "classSec": "A20",
+    "timestamp": 1777708398492,
+    "cameraLabel": "Node 02"
+  }
+]
