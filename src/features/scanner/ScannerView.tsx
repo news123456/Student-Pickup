@@ -1,6 +1,6 @@
 import React, { useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ShieldCheck, Search, CheckCircle2, Camera, Play, Square, XCircle, RotateCcw } from 'lucide-react';
+import { ShieldCheck, Search, CheckCircle2, Camera, Play, Square, XCircle, RotateCcw, Maximize2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useScannerStore } from '../../store/scannerStore';
 import { useHistoryStore } from '../../store/historyStore';
@@ -46,7 +46,11 @@ export default function ScannerView() {
       {/* Left: Camera Grid */}
       <div className="lg:col-span-8 flex flex-col space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
-          {([1, 2, 3] as const).map((slot) => {
+          {/* Slots are rendered in [selectedSlot, ...others] order so the focused
+              lane always occupies the big top-row cell (md:col-span-2). Switching
+              the selected lane in the right panel auto-promotes that slot here. */}
+          {[selectedSlot, ...([1, 2, 3] as const).filter((s) => s !== selectedSlot)].map((slot, idx) => {
+            const isFocused = idx === 0;
             const activeDevice = availableDevices.find((d) => d.deviceId === assignedDevices[slot]);
             const activeLabel = activeDevice?.label || (assignedDevices[slot] ? 'Camera Active' : 'No Source');
             const lane = laneStates[slot];
@@ -75,13 +79,39 @@ export default function ScannerView() {
             }
 
             return (
-              <div
+              <motion.div
                 key={slot}
+                layout
+                transition={{ type: 'spring', stiffness: 260, damping: 28 }}
                 className={cn(
-                  'glass-card overflow-hidden bg-slate-100 relative flex flex-col min-h-[320px] shadow-sm ring-1 ring-black/5',
-                  slot === 1 && 'md:col-span-2'
+                  'glass-card overflow-hidden bg-slate-100 relative flex flex-col min-h-[320px] shadow-sm ring-1',
+                  isFocused
+                    ? 'md:col-span-2 ring-2 ring-accent-emerald/50 shadow-lg shadow-accent-emerald/10'
+                    : 'ring-black/5'
                 )}
               >
+                {/* Lane label badge (top-left) */}
+                <div className={cn(
+                  'absolute top-2 left-2 z-10 px-2.5 py-1 rounded-md backdrop-blur-md flex items-center gap-1.5',
+                  isFocused
+                    ? 'bg-accent-emerald text-white'
+                    : 'bg-black/60 text-white'
+                )}>
+                  <span className="text-[9px] font-black uppercase tracking-widest">Lane {slot}</span>
+                  {laneScanning && <span className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />}
+                </div>
+
+                {/* Focus button on un-focused slots (top-right) */}
+                {!isFocused && (
+                  <button
+                    onClick={() => setSelectedSlot(slot)}
+                    title={`Focus Lane ${slot}`}
+                    className="absolute top-2 right-2 z-10 w-8 h-8 rounded-md bg-black/60 hover:bg-accent-emerald text-white flex items-center justify-center transition-all backdrop-blur-md cursor-pointer"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+
                 <div className="flex-1 relative min-h-0">
                   <ScanLane
                     slot={slot}
@@ -116,7 +146,7 @@ export default function ScannerView() {
                     ))}
                   </select>
                 </div>
-              </div>
+              </motion.div>
             );
           })}
         </div>
