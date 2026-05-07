@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import fs from "fs/promises";
 import { createServer } from "http";
 import { Server } from "socket.io";
+import cors from "cors";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,6 +13,10 @@ const __dirname = path.dirname(__filename);
 async function startServer() {
   const app = express();
   const httpServer = createServer(app);
+  
+  app.use(cors());
+  app.use(express.json({ limit: '50mb' }));
+
   const io = new Server(httpServer, {
     cors: { origin: "*" }
   });
@@ -21,17 +26,34 @@ async function startServer() {
   const REGISTRY_FILE = path.join(DATA_DIR, "registry.json");
   const SETTINGS_FILE = path.join(DATA_DIR, "settings.json");
   const HISTORY_FILE = path.join(DATA_DIR, "history.json");
+  const AUDITS_DIR = path.join(DATA_DIR, "audits");
 
   // Ensure data directory exists
   try {
     await fs.mkdir(DATA_DIR, { recursive: true });
+    await fs.mkdir(AUDITS_DIR, { recursive: true });
   } catch (err) {
     console.error("Error creating data directory:", err);
   }
 
-  app.use(express.json({ limit: '50mb' }));
-
   // API Routes
+  app.get("/api/storage-path", (req, res) => {
+    res.json({ path: DATA_DIR });
+  });
+
+  app.post("/api/audit", async (req, res) => {
+    try {
+      const { id, type, details, photo, timestamp } = req.body;
+      const auditFile = path.join(AUDITS_DIR, `audit_${timestamp}.json`);
+      const auditData = { id, type, details, timestamp, photo };
+      await fs.writeFile(auditFile, JSON.stringify(auditData, null, 2));
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Audit write error:", err);
+      res.status(500).json({ error: "Failed to save audit log" });
+    }
+  });
+
   app.get("/api/registry", async (req, res) => {
     try {
       const data = await fs.readFile(REGISTRY_FILE, "utf-8");

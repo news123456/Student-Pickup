@@ -2,6 +2,7 @@ export interface Guardian {
   role: 'Father' | 'Mother' | 'Guardian';
   name: string;
   faceDescriptor: number[];
+  faceDescriptors?: number[][];
   photo?: string;
 }
 
@@ -12,6 +13,7 @@ export interface RegistryEntry {
   classSec: string;
   guardians: Guardian[];
   studentFaceDescriptor: number[];
+  studentFaceDescriptors?: number[][];
   studentPhoto?: string;
   createdAt: number;
 }

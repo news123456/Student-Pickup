@@ -32,9 +32,10 @@ export default defineConfig(({mode}) => {
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,json}'],
+          maximumFileSizeToCacheInBytes: 5242880,
           runtimeCaching: [
             {
-              urlPattern: /^https:\/\/cdn\.jsdelivr\.net\/gh\/justadudewhohacks\/face-api\.js@master\/weights\/.*/i,
+              urlPattern: /^https:\/\/vladmandic\.github\.io\/face-api\/model\/.*/i,
               handler: 'CacheFirst',
               options: {
                 cacheName: 'face-api-models',
