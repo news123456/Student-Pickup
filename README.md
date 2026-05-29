@@ -1,20 +1,12 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# GuardLink Enterprise
 
-# Run and deploy your AI Studio app
+## Executive Summary
+GuardLink is an enterprise-grade, privacy-first biometric access and verification system designed for high-security, low-latency environments. 
 
-This contains everything you need to run your app locally.
+### Key Technical Pillars
+- **Edge-First Biometric Processing:** All facial recognition is performed strictly client-side using a optimized CNN, ensuring no PII leaves the local device.
+- **Offline-First Resilience:** Engineered to function autonomously without network connectivity using a combination of persistent IndexedDB storage and PWA-based asset caching.
+- **Enterprise Security Hardening:** Multi-layered defense covering data-at-rest protection (AES), transport Layer security (via Helmet/CSP), and infrastructure-level isolation in production.
 
-View your app in AI Studio: https://ai.studio/apps/e34e9480-9915-4bd7-a6fc-2fc43668eee2
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+### Operational Philosophy
+GuardLink prioritizes auditability, data integrity, and operational continuity, making it ideal for institutional use-cases requiring strict adherence to privacy compliance and liability protection.

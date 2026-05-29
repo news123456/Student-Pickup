@@ -15,25 +15,25 @@
 }
 
 :root {
-  --bg-main: #f8fafc;
+  --bg-main: #fafafa;
   --bg-surface: #ffffff;
   --border-surface: #e2e8f0;
-  --accent-primary: #059669; /* Slightly deeper emerald */
-  --accent-alpha: rgba(5, 150, 105, 0.08);
+  --accent-primary: #0f172a; /* Slate 900 for a more authoritative feel */
+  --accent-alpha: rgba(15, 23, 42, 0.05);
   --text-main: #0f172a;
   --text-muted: #64748b;
   --card-bg: #ffffff;
 }
 
 [data-theme='dark'] {
-  --bg-main: #0f172a;
-  --bg-surface: #1e293b;
-  --border-surface: #334155;
-  --accent-primary: #10b981;
-  --accent-alpha: rgba(16, 185, 129, 0.1);
+  --bg-main: #020617;
+  --bg-surface: #0f172a;
+  --border-surface: #1e293b;
+  --accent-primary: #38bdf8; /* Light Sky for high contrast on dark */
+  --accent-alpha: rgba(56, 189, 248, 0.1);
   --text-main: #f8fafc;
   --text-muted: #94a3b8;
-  --card-bg: #1e293b;
+  --card-bg: #0f172a;
 }
 
 [data-accent='blue'] { --accent-primary: #3b82f6; --accent-alpha: rgba(59, 130, 246, 0.1); }

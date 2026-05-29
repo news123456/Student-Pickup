@@ -6,6 +6,7 @@ import fs from "fs/promises";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import cors from "cors";
+import helmet from "helmet";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,6 +15,21 @@ async function startServer() {
   const app = express();
   const httpServer = createServer(app);
   
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          "default-src": ["'self'"],
+          "script-src": ["'self'", "'unsafe-inline'"],
+          "style-src": ["'self'", "'unsafe-inline'"],
+          "img-src": ["'self'", "data:", "blob:"],
+          "connect-src": ["'self'", "ws:", "wss:"],
+          "font-src": ["'self'", "https://fonts.gstatic.com"],
+          "frame-ancestors": ["'none'"],
+        },
+      },
+    })
+  );
   app.use(cors());
   app.use(express.json({ limit: '50mb' }));
 
@@ -85,9 +101,11 @@ async function startServer() {
 
   app.post("/api/settings", async (req, res) => {
     try {
+      console.log('Received settings update:', JSON.stringify(req.body));
       await fs.writeFile(SETTINGS_FILE, JSON.stringify(req.body, null, 2));
       res.json({ success: true });
     } catch (err) {
+      console.error("Settings write error:", err);
       res.status(500).json({ error: "Failed to save settings" });
     }
   });

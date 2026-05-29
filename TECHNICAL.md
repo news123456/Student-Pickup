@@ -25,6 +25,13 @@ GuardLink is designed with a **Privacy-by-Design** philosophy.
 - **False Acceptance Rate (FAR)**: < 0.01%
 - **False Rejection Rate (FRR)**: < 1.0% (at 0.45 threshold)
 
+### 4.2 Licensing System
+- **Format**: `DM1808-DDMMYYYY-Days` (e.g., `DM1808-11052026-090`).
+- **Validation**: Server-side enforced, client-validated with advanced obfuscation.
+
+### 4.3 Authentication
+- **Security**: Added password reconfirmation and visibility toggles to sensitive administrative forms to prevent entry errors and enhance security.
+
 ### 4.2 Offline Continuity
 The system utilizes a **Service Worker (PWA)** architecture to ensure 100% operational uptime in environments with intermittent or zero internet connectivity. All feature extraction and matching logic are executed in-memory.
 

@@ -18,6 +18,7 @@ Family dynamics are complex. GuardLink allows for the enrollment of multiple aut
 ### 3. Enterprise Accountability
 - **Instant Audit Trails**: Know exactly who picked up which child and when.
 - **Registry Governance**: Revoke or update access permissions instantly via the administrative control panel.
+- **Enhanced Security**: Added rigorous password validation and streamlined license management for administrators.
 - **Privacy First**: Respects data privacy laws (GDPR/CCPA compliant architectural logic) by keeping biometric data at the institution level.
 
 ## Value Proposition

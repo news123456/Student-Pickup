@@ -35,7 +35,7 @@ export default defineConfig(({mode}) => {
           maximumFileSizeToCacheInBytes: 5242880,
           runtimeCaching: [
             {
-              urlPattern: /^https:\/\/vladmandic\.github\.io\/face-api\/model\/.*/i,
+              urlPattern: /^https:\/\/cdn\.jsdelivr\.net\/npm\/@vladmandic\/face-api\/model\/.*/i,
               handler: 'CacheFirst',
               options: {
                 cacheName: 'face-api-models',

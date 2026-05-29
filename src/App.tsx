@@ -18,8 +18,11 @@ import { validateLicense, generateLicense } from './lib/licenseEngine';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import { cn } from './lib/utils';
+import { saveData, getData } from './lib/db';
 import { RegistryEntry, PickupLog, Guardian } from './types.ts';
-import { exportLogsToPDF, exportRegistryToPDF, exportTechnicalDoc, exportPresentationDoc } from './lib/pdfExport';
+import { exportLogsToPDF, exportRegistryToPDF, exportTechnicalDoc, exportTechnologyReport } from './lib/pdfExport';
+import { DetailPopup } from './components/DetailPopup';
+
 
 // Constants
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
@@ -113,30 +116,23 @@ export default function App() {
         return;
       }
 
-      const valCheck = validateLicense(licenseKey, schoolName);
-      if (!valCheck.valid || !valCheck.expiry) {
-        setLicenseStatus({ isActive: false, remainingDays: 0, error: "Authentication Failure" });
+      const valCheck = validateLicense(licenseKey);
+      if (!valCheck.valid) {
+        setLicenseStatus({ isActive: false, remainingDays: 0, error: valCheck.error || "Authentication Failure" });
         return;
       }
 
-      const diff = valCheck.expiry - now;
-      const daysLeft = Math.ceil(diff / (1000 * 60 * 60 * 24));
-
-      if (daysLeft <= 0) {
-        setLicenseStatus({ isActive: false, remainingDays: 0, error: "License Expired" });
-      } else {
-        setLicenseStatus({ isActive: true, remainingDays: daysLeft });
-      }
+      setLicenseStatus({ isActive: true, remainingDays: valCheck.daysRemaining || 0 });
     };
 
     const interval = setInterval(checkLicense, 30000); 
     checkLicense();
     return () => clearInterval(interval);
-  }, [systemSettings.isTampered, systemSettings.licenseKey, systemSettings.schoolName]);
+  }, [systemSettings.isTampered, systemSettings.licenseKey]);
 
   const activateProduct = (key: string) => {
-    const result = validateLicense(key, systemSettings.schoolName);
-    if (result.valid && result.expiry) {
+    const result = validateLicense(key);
+    if (result.valid) {
       const updated: SystemSettings = {
         ...systemSettings,
         licenseKey: key,
@@ -334,16 +330,21 @@ export default function App() {
     setSyncStatus('syncing');
     const trySync = async (retries = 3) => {
       try {
-        const response = await fetch("/api/settings", {
+        console.log("Attempting to sync settings...");
+        const response = await fetch(`${window.location.origin}/api/settings`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(newSettings || {})
         });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`HTTP ${response.status}: ${text}`);
+        }
         setSyncStatus('idle');
         setSystemSettings(prev => ({ ...prev, lastSyncTimestamp: Date.now() }));
       } catch (err) {
         if (retries > 0) {
+          console.warn(`Sync failed, retrying (${retries} left)...`, err);
           setTimeout(() => trySync(retries - 1), 2000);
         } else {
           console.error("Failed to sync settings after retries:", err);
@@ -550,6 +551,7 @@ export default function App() {
   }
 
   return (
+    <>
     <div className="min-h-screen bg-background text-text-primary font-sans selection:bg-accent-emerald/30">
       {!licenseStatus.isActive && activeTab === 'scan' && (
         <div className="absolute inset-0 z-50 bg-black/40 backdrop-blur-3xl flex flex-col items-center justify-center p-6 text-center">
@@ -569,8 +571,8 @@ export default function App() {
         </div>
       )}
 
-      {/* Navigation Bar */}
-      <nav className="h-[72px] border-b border-surface-border px-4 sm:px-10 flex items-center justify-between sticky top-0 z-50 backdrop-blur-xl bg-background/80">
+      {/* Refined Navigation Bar */}
+      <nav className="h-[72px] border-b border-surface-border px-4 sm:px-6 flex items-center justify-between sticky top-0 z-50 backdrop-blur-xl bg-background/90">
         <div className="flex items-center space-x-3 sm:space-x-4">
           <div className="w-9 h-9 sm:w-10 sm:h-10 bg-accent-emerald rounded-lg sm:rounded-xl flex items-center justify-center group shadow-sm flex-shrink-0">
             <ShieldCheck className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
@@ -581,7 +583,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="flex bg-surface border border-surface-border p-1 rounded-2xl shadow-sm sm:absolute sm:left-1/2 sm:-translate-x-1/2">
+        <div className="flex bg-surface border border-surface-border p-1 rounded-xl shadow-inner shadow-black/5">
           <NavBtn 
             active={activeTab === 'scan'} 
             onClick={() => setActiveTab('scan')} 
@@ -1071,7 +1073,7 @@ export default function App() {
               }}
               onDownload={() => exportRegistryToPDF(registry)}
               onDownloadTechnical={exportTechnicalDoc}
-              onDownloadPresentation={exportPresentationDoc}
+              onDownloadTechnology={exportTechnologyReport}
               onExportBackup={exportBackup}
               onImportBackup={importBackup}
               backupInterval={backupInterval}
@@ -1090,6 +1092,12 @@ export default function App() {
               onActivate={activateProduct}
               licenseStatus={licenseStatus}
               syncStatus={syncStatus}
+              accent={accent}
+              onAccentChange={(newAccent) => {
+                setAccent(newAccent);
+                localStorage.setItem(ACCENT_STORAGE_KEY, newAccent);
+              }}
+              onLogout={() => setIsAdminAuthenticated(false)}
             />
           )}
         </AnimatePresence>
@@ -1124,6 +1132,7 @@ export default function App() {
         />
       </div>
     </div>
+    </>
   );
 }
 
@@ -1156,7 +1165,7 @@ function NavBtn({ active, onClick, label, icon }: { active: boolean; onClick: ()
     <button 
       onClick={onClick}
       className={cn(
-        "px-4 sm:px-6 py-2.5 rounded-xl transition-all duration-200 flex items-center justify-center sm:justify-start space-x-2.5 group cursor-pointer",
+        "relative z-50 px-4 sm:px-6 py-2.5 rounded-xl transition-all duration-200 flex items-center justify-center sm:justify-start space-x-2.5 group cursor-pointer",
         active 
           ? "bg-accent-emerald text-white shadow-sm shadow-accent-emerald/20" 
           : "text-text-secondary hover:text-text-primary hover:bg-black/5"
@@ -1409,9 +1418,9 @@ function Scanner({
         return;
       }
       
-      setErrorMsg(name === 'NotAllowedError' || name === 'PermissionDeniedError' 
-        ? "Access Denied" 
-        : (name === 'NotReadableError' || name === 'TrackStartError' ? "Camera Busy/In Use" : "Offline/Error"));
+      const title = name === 'NotAllowedError' || name === 'PermissionDeniedError' ? "Permission Denied" : name === 'NotFoundError' ? "Device Not Found" : (name === 'NotReadableError' || name === 'TrackStartError' ? "Camera Busy" : "Camera Error");
+      const message = name === 'NotAllowedError' || name === 'PermissionDeniedError' ? "Allow access in browser settings." : name === 'NotFoundError' ? "Ensure camera is connected." : (name === 'NotReadableError' || name === 'TrackStartError' ? "Close apps using camera." : "Please check camera connection.");
+      setErrorMsg(`${title}|${message}`);
       setIsCameraActive(false);
     }
   };
@@ -1611,12 +1620,10 @@ function Scanner({
               <AlertTriangle className="w-8 h-8 text-red-500" />
             </div>
             <h3 className="text-xl font-black text-white uppercase italic mb-2 tracking-tighter">
-              {errorMsg === 'Access Denied' ? 'Permission Required' : 'Camera Error'}
+              {errorMsg ? errorMsg.split('|')[0] : 'Camera Error'}
             </h3>
             <p className="text-text-secondary text-[11px] font-medium uppercase tracking-widest leading-relaxed mb-8 max-w-[200px]">
-              {errorMsg === 'Access Denied' 
-                ? "Please grant camera access in your browser to enable recognition" 
-                : "The camera is currently unavailable or being used by another app"}
+              {errorMsg ? errorMsg.split('|')[1] : "The camera is currently unavailable or being used by another app"}
             </p>
                   <button 
                     onClick={() => {
@@ -1630,7 +1637,7 @@ function Scanner({
                   >
                     {window.top !== window.self ? 'Open in New Tab' : 'Retry Connection'}
                   </button>
-            {errorMsg === 'Access Denied' && (
+            {errorMsg?.includes('Denied') && (
               <p className="mt-6 text-[8px] text-white/30 font-black uppercase tracking-widest">
                 Tip: Try opening in a new tab if permission is blocked
               </p>
@@ -2487,12 +2494,13 @@ function AdminTab({
   onDelete,
   onDownload,
   onDownloadTechnical,
-  onDownloadPresentation,
+  onDownloadTechnology,
   onExportBackup,
   onImportBackup,
   backupInterval,
   onStressTest,
   isGeneratingTest,
+  onLogout,
   onSetBackupInterval,
   systemSettings,
   onUpdateSettings,
@@ -2500,7 +2508,9 @@ function AdminTab({
   onUpdateEntry,
   onActivate,
   licenseStatus,
-  syncStatus
+  syncStatus,
+  accent,
+  onAccentChange
 }: { 
   registry: RegistryEntry[]; 
   isAuthenticated: boolean; 
@@ -2508,10 +2518,11 @@ function AdminTab({
   isLoginError: boolean;
   onStressTest: () => void;
   isGeneratingTest: boolean;
+  onLogout: () => void;
   onDelete: (id: string) => void;
   onDownload: () => void;
   onDownloadTechnical: () => void;
-  onDownloadPresentation: () => void;
+  onDownloadTechnology: () => void;
   onExportBackup: () => void;
   onImportBackup: (e: React.ChangeEvent<HTMLInputElement>) => void;
   backupInterval: BackupInterval;
@@ -2523,7 +2534,10 @@ function AdminTab({
   onActivate: (key: string) => boolean;
   licenseStatus: { isActive: boolean; remainingDays: number; isTampered?: boolean; error?: string };
   syncStatus: 'idle' | 'syncing' | 'error';
+  accent: Accent;
+  onAccentChange: (a: Accent) => void;
 }) {
+  const [selectedEntry, setSelectedEntry] = useState<RegistryEntry | null>(null);
   const [showDbDetails, setShowDbDetails] = useState(false);
   const [pass, setPass] = useState('');
   const [showPass, setShowPass] = useState(false);
@@ -2532,6 +2546,7 @@ function AdminTab({
   const [calibrationEntry, setCalibrationEntry] = useState<RegistryEntry | null>(null);
   const [view, setView] = useState<'registry' | 'settings'>('registry');
   const [newPassword, setNewPassword] = useState(systemSettings.systemPassword || '');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showNewPass, setShowNewPass] = useState(false);
   const [saveStatus, setSaveStatus] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -2542,7 +2557,7 @@ function AdminTab({
   const adminVideoRef = useRef<HTMLVideoElement>(null);
 
   const generateNewLicense = () => {
-    const key = generateLicense(genDays, systemSettings.schoolName || "DEMO");
+    const key = generateLicense(genDays);
     setGeneratedKey(key);
   };
 
@@ -2656,7 +2671,6 @@ const handleSecureDelete = async (person: RegistryEntry) => {
         <Lock className="w-12 h-12 text-accent-emerald mx-auto mb-6" />
         <h2 className="text-xl font-extrabold text-text-primary uppercase tracking-tight mb-2">Admin Access</h2>
         <p className="text-xs text-text-secondary mb-8 uppercase tracking-widest">Master Credentials Required</p>
-        
         <form onSubmit={(e) => { e.preventDefault(); onLogin(pass); }} className="space-y-4">
           <div className="relative">
             <input 
@@ -2691,97 +2705,105 @@ const handleSecureDelete = async (person: RegistryEntry) => {
   }
 
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="max-w-6xl mx-auto space-y-6 sm:space-y-8 px-4 sm:px-0"
-    >
-      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-6">
-        <div className="text-center xl:text-left">
-          <h2 className="text-2xl sm:text-3xl font-extrabold text-text-primary tracking-tight uppercase mb-1">Registry Control</h2>
-          <p className="text-text-secondary text-[10px] sm:text-xs font-medium tracking-tight uppercase">Authorized Student & Guardian Records</p>
+    <>
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="max-w-7xl mx-auto space-y-8 px-6 py-8"
+      >
+        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-6">
+          <div className="text-center xl:text-left">
+            <h2 className="text-2xl sm:text-3xl font-extrabold text-text-primary tracking-tight uppercase mb-1">Registry Control</h2>
+            <p className="text-text-secondary text-[10px] sm:text-xs font-medium tracking-tight uppercase">Authorized Student & Guardian Records</p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center xl:justify-end gap-2 sm:gap-3">
+             <button 
+               onClick={() => setView(view === 'registry' ? 'settings' : 'registry')}
+               className={cn(
+                 "flex items-center space-x-2 px-3 sm:px-4 py-2 sm:py-3 border rounded-xl transition-all group cursor-pointer",
+                 view === 'settings' ? "bg-white text-black border-white" : "bg-surface hover:bg-white/10 border-surface-border text-text-primary"
+               )}
+             >
+               <Palette className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+               <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest">{view === 'registry' ? 'Settings' : 'Registry'}</span>
+             </button>
+
+             <button 
+               onClick={() => setShowDbDetails(!showDbDetails)}
+               className={cn(
+                 "hidden sm:flex p-1 rounded-xl border mr-2 items-center space-x-2 px-3 self-stretch transition-all cursor-pointer",
+                 showDbDetails ? "bg-accent-emerald/10 border-accent-emerald" : "bg-surface border-surface-border hover:bg-white/5"
+               )}
+             >
+                <Database className={cn("w-4 h-4", showDbDetails ? "text-accent-emerald" : "text-accent-emerald opacity-50")} />
+                <div className="flex flex-col text-left">
+                  <span className="text-[10px] font-black text-text-primary uppercase italic leading-tight">Master Database</span>
+                  <span className="text-[8px] font-bold text-text-secondary uppercase tracking-widest leading-tight overflow-hidden text-ellipsis whitespace-nowrap max-w-[150px]">{storagePath || 'Persistence Tier A'}</span>
+                </div>
+             </button>
+             
+             <button 
+               onClick={onExportBackup}
+               className="flex items-center space-x-2 px-3 sm:px-4 py-2 sm:py-3 bg-surface hover:bg-white/10 border border-surface-border rounded-xl transition-all group cursor-pointer"
+               title="Download JSON Backup"
+             >
+               <FileJson className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-accent-emerald group-hover:scale-110 transition-all" />
+               <span className="text-[9px] sm:text-[10px] font-black text-text-primary uppercase tracking-widest">Backup</span>
+             </button>
+
+             <label className="flex items-center space-x-2 px-3 sm:px-4 py-2 sm:py-3 bg-surface hover:bg-white/10 border border-surface-border rounded-xl transition-all group cursor-pointer">
+               <Upload className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-accent-emerald group-hover:scale-110 transition-all" />
+               <span className="text-[9px] sm:text-[10px] font-black text-text-primary uppercase tracking-widest">Restore</span>
+               <input type="file" accept=".json" onChange={onImportBackup} className="hidden" />
+             </label>
+
+             <div className="flex bg-surface p-1 rounded-xl border border-surface-border items-center">
+                <span className="hidden xs:block text-[8px] font-black text-text-secondary uppercase tracking-widest px-2">Auto-Save:</span>
+                <div className="flex space-x-1">
+                  {(['off', 'daily', 'weekly'] as BackupInterval[]).map((int) => (
+                    <button
+                      key={int}
+                      onClick={() => onSetBackupInterval(int)}
+                      className={cn(
+                        "px-1.5 sm:px-2 py-1 rounded-md text-[8px] font-black uppercase transition-all",
+                        backupInterval === int 
+                          ? "bg-accent-emerald text-black" 
+                          : "text-text-secondary hover:text-white hover:bg-white/5"
+                      )}
+                    >
+                      {int}
+                    </button>
+                  ))}
+                </div>
+             </div>
+
+             <div className="w-px h-8 bg-surface-border mx-2 hidden xl:block" />
+
+             <button 
+               onClick={onDownloadTechnical}
+               className="bg-surface hover:bg-white/10 px-3 sm:px-4 py-2 sm:py-3 rounded-xl border border-surface-border text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-text-secondary flex items-center space-x-2 transition-all cursor-pointer"
+             >
+               <ShieldCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+               <span className="hidden xs:inline">Technical</span>
+             </button>
+             <button 
+               onClick={onDownloadTechnology}
+               className="bg-surface hover:bg-white/10 px-3 sm:px-4 py-2 sm:py-3 rounded-xl border border-surface-border text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-text-secondary flex items-center space-x-2 transition-all cursor-pointer"
+             >
+               <Zap className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+               <span className="hidden xs:inline">Tech Report</span>
+             </button>
+
+             <button 
+              onClick={onDownload}
+              className="bg-accent-emerald text-white px-4 sm:px-6 py-2 sm:py-3 rounded-xl shadow-lg shadow-accent-emerald/20 text-[10px] sm:text-[11px] font-black uppercase tracking-widest flex items-center space-x-2 transition-all cursor-pointer"
+            >
+              <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+              <span>Export PDF</span>
+            </button>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center justify-center xl:justify-end gap-2 sm:gap-3">
-           <button 
-             onClick={() => setView(view === 'registry' ? 'settings' : 'registry')}
-             className={cn(
-               "flex items-center space-x-2 px-3 sm:px-4 py-2 sm:py-3 border rounded-xl transition-all group cursor-pointer",
-               view === 'settings' ? "bg-white text-black border-white" : "bg-surface hover:bg-white/10 border-surface-border text-text-primary"
-             )}
-           >
-             <Palette className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-             <span className="text-[9px] sm:text-[10px] font-black uppercase tracking-widest">{view === 'registry' ? 'Settings' : 'Registry'}</span>
-           </button>
-
-           <button 
-             onClick={() => setShowDbDetails(!showDbDetails)}
-             className={cn(
-               "hidden sm:flex p-1 rounded-xl border mr-2 items-center space-x-2 px-3 self-stretch transition-all cursor-pointer",
-               showDbDetails ? "bg-accent-emerald/10 border-accent-emerald" : "bg-surface border-surface-border hover:bg-white/5"
-             )}
-           >
-              <Database className={cn("w-4 h-4", showDbDetails ? "text-accent-emerald" : "text-accent-emerald opacity-50")} />
-              <div className="flex flex-col text-left">
-                <span className="text-[10px] font-black text-text-primary uppercase italic leading-tight">Master Database</span>
-                <span className="text-[8px] font-bold text-text-secondary uppercase tracking-widest leading-tight overflow-hidden text-ellipsis whitespace-nowrap max-w-[150px]">{storagePath || 'Persistence Tier A'}</span>
-              </div>
-           </button>
-           
-           <button 
-             onClick={onExportBackup}
-             className="flex items-center space-x-2 px-3 sm:px-4 py-2 sm:py-3 bg-surface hover:bg-white/10 border border-surface-border rounded-xl transition-all group cursor-pointer"
-             title="Download JSON Backup"
-           >
-             <FileJson className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-accent-emerald group-hover:scale-110 transition-all" />
-             <span className="text-[9px] sm:text-[10px] font-black text-text-primary uppercase tracking-widest">Backup</span>
-           </button>
-
-           <label className="flex items-center space-x-2 px-3 sm:px-4 py-2 sm:py-3 bg-surface hover:bg-white/10 border border-surface-border rounded-xl transition-all group cursor-pointer">
-             <Upload className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-accent-emerald group-hover:scale-110 transition-all" />
-             <span className="text-[9px] sm:text-[10px] font-black text-text-primary uppercase tracking-widest">Restore</span>
-             <input type="file" accept=".json" onChange={onImportBackup} className="hidden" />
-           </label>
-
-           <div className="flex bg-surface p-1 rounded-xl border border-surface-border items-center">
-              <span className="hidden xs:block text-[8px] font-black text-text-secondary uppercase tracking-widest px-2">Auto-Save:</span>
-              <div className="flex space-x-1">
-                {(['off', 'daily', 'weekly'] as BackupInterval[]).map((int) => (
-                  <button
-                    key={int}
-                    onClick={() => onSetBackupInterval(int)}
-                    className={cn(
-                      "px-1.5 sm:px-2 py-1 rounded-md text-[8px] font-black uppercase transition-all",
-                      backupInterval === int 
-                        ? "bg-accent-emerald text-black" 
-                        : "text-text-secondary hover:text-white hover:bg-white/5"
-                    )}
-                  >
-                    {int}
-                  </button>
-                ))}
-              </div>
-           </div>
-
-           <div className="w-px h-8 bg-surface-border mx-2 hidden xl:block" />
-
-           <button 
-             onClick={onDownloadTechnical}
-             className="bg-surface hover:bg-white/10 px-3 sm:px-4 py-2 sm:py-3 rounded-xl border border-surface-border text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-text-secondary flex items-center space-x-2 transition-all cursor-pointer"
-           >
-             <ShieldCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-             <span className="hidden xs:inline">Technical</span>
-           </button>
-
-           <button 
-            onClick={onDownload}
-            className="bg-accent-emerald text-white px-4 sm:px-6 py-2 sm:py-3 rounded-xl shadow-lg shadow-accent-emerald/20 text-[10px] sm:text-[11px] font-black uppercase tracking-widest flex items-center space-x-2 transition-all cursor-pointer"
-          >
-            <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-            <span>Export PDF</span>
-          </button>
-        </div>
-      </div>
-
+      </motion.div>
       <AnimatePresence>
         {showDbDetails && (
           <motion.div 
@@ -2868,7 +2890,7 @@ const handleSecureDelete = async (person: RegistryEntry) => {
                 </thead>
                 <tbody className="divide-y divide-surface-border">
                   {filteredRegistry.map((person) => (
-                    <tr key={person.id} className="hover:bg-accent-emerald-alpha transition-all group">
+                    <tr key={person.id} onClick={() => setSelectedEntry(person)} className="hover:bg-accent-emerald-alpha transition-all group cursor-pointer">
                       <td className="px-6 py-5">
                         <div className="flex -space-x-2">
                             <div className="w-10 h-10 rounded-lg border-2 border-surface bg-background overflow-hidden ring-2 ring-surface-border">
@@ -2930,7 +2952,7 @@ const handleSecureDelete = async (person: RegistryEntry) => {
             {/* Card View (Mobile/Tablet) */}
             <div className="lg:hidden space-y-4">
               {filteredRegistry.map((person) => (
-                <div key={person.id} className="glass-card p-4 space-y-4">
+                <div key={person.id} onClick={() => setSelectedEntry(person)} className="glass-card p-4 space-y-4 cursor-pointer">
                   <div className="flex justify-between items-start">
                     <div className="flex -space-x-3">
                       <div className="w-12 h-12 rounded-xl border-2 border-surface bg-white/5 overflow-hidden ring-4 ring-black/50">
@@ -3025,6 +3047,17 @@ const handleSecureDelete = async (person: RegistryEntry) => {
               </div>
             </div>
 
+            <div className="space-y-2">
+              <label className="info-label">Confirm Master Password</label>
+              <input 
+                type={showNewPass ? "text" : "password"}
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="w-full bg-surface border border-surface-border rounded-xl px-5 py-4 text-sm font-bold text-white focus:border-accent-emerald outline-none transition-all"
+                placeholder="CONFIRM MASTER PASSWORD..."
+              />
+            </div>
+
             <div className="p-6 bg-accent-emerald/5 rounded-2xl border border-accent-emerald/10 flex items-center justify-between">
               <div>
                 <p className="text-xs font-black text-white uppercase italic">Full-Drive Persistence</p>
@@ -3045,23 +3078,49 @@ const handleSecureDelete = async (person: RegistryEntry) => {
               >
                 {isGeneratingTest ? "GENERATING..." : "RUN CAPACITY TEST"}
               </button>
+              <button 
+                onClick={onLogout}
+                className="px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-500 text-[9px] font-black uppercase rounded-lg transition-all decoration-none"
+              >
+                Logout
+              </button>
             </div>
 
-            <div className="p-8 bg-slate-900 border border-white/5 rounded-[2rem] space-y-6">
+            <div className="p-8 bg-slate-900 border border-white/5 rounded-[2rem] space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3">
                   <Zap className="w-5 h-5 text-accent-emerald" />
-                  <h4 className="text-sm font-black text-white uppercase tracking-tighter italic">License & School Profile</h4>
+                  <h4 className="text-sm font-black text-white uppercase tracking-tighter italic">License Status</h4>
                 </div>
-                {licenseStatus.isActive && (
-                  <div className="flex items-center space-x-2 bg-accent-emerald/10 px-3 py-1 rounded-full border border-accent-emerald/20">
-                    <CheckCircle2 className="w-3 h-3 text-accent-emerald" />
-                    <span className="text-[8px] font-black text-accent-emerald uppercase tracking-widest">SECURE_ACTIVE</span>
-                  </div>
-                )}
+                <div className="flex items-center space-x-3">
+                  <span className={cn("text-xs font-black uppercase tracking-widest", licenseStatus.isActive ? "text-accent-emerald" : "text-red-500")}>
+                    {licenseStatus.isActive ? "ACTIVE" : "INACTIVE / EXPIRED"}
+                  </span>
+                  <div className="w-px h-4 bg-white/10" />
+                  <span className="text-xs font-bold text-text-primary">{licenseStatus.remainingDays} DAYS REMAINING</span>
+                </div>
               </div>
 
               <div className="space-y-4">
+                <div className="space-y-2">
+                  <p className="text-[8px] font-black text-text-secondary uppercase tracking-widest ml-1">Interface Accent</p>
+                  <div className="grid grid-cols-5 gap-3">
+                    {(['emerald', 'blue', 'purple', 'amber', 'rose'] as const).map((a) => (
+                      <button
+                        key={a}
+                        onClick={() => onAccentChange(a)}
+                        className={cn(
+                          "w-full aspect-square rounded-lg border-2 transition-all flex items-center justify-center",
+                          accent === a ? "border-white" : "border-transparent",
+                          a === 'emerald' ? 'bg-emerald-500' :
+                          a === 'blue' ? 'bg-blue-500' :
+                          a === 'purple' ? 'bg-purple-500' :
+                          a === 'amber' ? 'bg-amber-500' : 'bg-rose-500'
+                        )}
+                      />
+                    ))}
+                  </div>
+                </div>
                 <div className="space-y-2">
                   <p className="text-[8px] font-black text-text-secondary uppercase tracking-widest ml-1">Official School Name (First 4 chars used as Signature)</p>
                   <input 
@@ -3092,79 +3151,23 @@ const handleSecureDelete = async (person: RegistryEntry) => {
                 </div>
               </div>
 
-              {!licenseStatus.isActive && (
-                <div className="space-y-3 pt-4 border-t border-white/5">
-                   <p className="text-[9px] font-black text-red-500 uppercase tracking-widest">Activation Required</p>
-                   <div className="flex space-x-2">
-                    <input 
-                      type="text"
-                      id="activation-input"
-                      placeholder="Enter License Authentication Code"
-                      className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-[10px] font-mono text-white outline-none focus:border-accent-emerald/50"
-                    />
-                    <button 
-                      onClick={() => {
-                        const val = (document.getElementById('activation-input') as HTMLInputElement).value;
-                        if (onActivate(val)) {
-                          alert("SECURE_NODE_ACTIVATED: Systems online.");
-                        } else {
-                          alert("AUTH_SIG_REJECTED: Invalid code or mismatched signature.");
-                        }
-                      }}
-                      className="px-6 py-3 bg-accent-emerald text-black text-[9px] font-black uppercase rounded-xl"
-                    >
-                      ACTIVATE
-                    </button>
-                   </div>
-                </div>
-              )}
+{/* Activation field removed as requested */}
 
+              
               <div className="space-y-4 pt-4 border-t border-white/5">
-                <p className="text-[9px] font-black text-text-secondary uppercase tracking-widest">Business Key Generator (Internal Tool)</p>
-                <div className="flex items-center space-x-3">
-                  <select 
-                    value={genDays} 
-                    onChange={(e) => setGenDays(Number(e.target.value))}
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-[10px] font-bold text-white uppercase tracking-widest outline-none focus:border-accent-emerald/50 transition-all"
-                  >
-                    <option value={30} className="bg-slate-900">30 DAYS TRIAL</option>
-                    <option value={90} className="bg-slate-900">90 DAYS QUARTERLY</option>
-                    <option value={365} className="bg-slate-900">365 DAYS ANNUAL</option>
-                    <option value={3650} className="bg-slate-900">ENTERPRISE (10Y)</option>
-                  </select>
-                  <button 
-                    onClick={generateNewLicense}
-                    className="px-6 py-3 bg-white hover:bg-slate-200 text-black text-[9px] font-black uppercase rounded-xl transition-all"
-                  >
-                    GENERATE
-                  </button>
+                <p className="text-[9px] font-black text-text-secondary uppercase tracking-widest">System Operational Metadata</p>
+                <div className="text-[10px] text-text-secondary font-mono bg-white/5 p-3 rounded-lg">
+                  NODE: A-4 | INST: {new Date().getFullYear()}
                 </div>
-                {generatedKey && (
-                  <div className="space-y-2">
-                    <p className="text-[8px] font-black text-accent-emerald uppercase tracking-widest">Master Signature Key Generated:</p>
-                    <div className="relative group">
-                      <input 
-                        readOnly 
-                        value={generatedKey} 
-                        className="w-full bg-accent-emerald/10 border border-accent-emerald/20 text-accent-emerald font-mono text-[10px] p-4 rounded-xl text-center"
-                      />
-                      <button 
-                        onClick={() => {
-                          navigator.clipboard.writeText(generatedKey);
-                          alert("License key copied to clipboard");
-                        }}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 p-2 bg-accent-emerald text-black rounded-md opacity-0 group-hover:opacity-100 transition-all"
-                      >
-                        <Download className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
 
             <button 
               onClick={() => {
+                if (newPassword !== confirmPassword) {
+                  alert("PASSWORD_MISMATCH: Passwords do not match.");
+                  return;
+                }
                 onUpdateSettings({ ...systemSettings, systemPassword: newPassword });
                 setSaveStatus(true);
                 setTimeout(() => setSaveStatus(false), 2000);
@@ -3256,6 +3259,7 @@ const handleSecureDelete = async (person: RegistryEntry) => {
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.div>
+    
+    </>
   );
 }

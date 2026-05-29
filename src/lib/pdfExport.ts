@@ -138,34 +138,45 @@ export const exportTechnicalDoc = () => {
   doc.save('GuardLink-Enterprise-Technical-Spec.pdf');
 };
 
-export const exportPresentationDoc = () => {
+export const exportTechnologyReport = () => {
   const doc = new jsPDF();
   const primaryColor = [16, 185, 129];
   
-  // Title Page Style
-  doc.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-  doc.rect(0, 0, 210, 40, 'F');
+  // Header
+  doc.setFontSize(20);
+  doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+  doc.text('TECHNOLOGY & AI MODEL REPORT', 105, 20, { align: 'center' });
   
-  doc.setFontSize(22);
-  doc.setTextColor(255);
-  doc.text('GUARDLINK SECURE', 105, 20, { align: 'center' });
   doc.setFontSize(10);
-  doc.text('ENHANCING STUDENT SAFETY THROUGH BIOMETRICS', 105, 28, { align: 'center' });
+  doc.setTextColor(100);
+  doc.text('GUARDLINK SECURE BIOMETRICS', 105, 28, { align: 'center' });
+  
+  doc.setDrawColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+  doc.line(20, 32, 190, 32);
 
-  doc.setTextColor(0);
-  doc.setFontSize(16);
-  doc.text('The Institutional Safety Standard', 20, 60);
-
-  const points = [
-    { t: 'THE CRISIS', c: 'Traditional ID cards are easily lost or copied. Manual verification is slow and prone to human error, resulting in significant security loopholes during school pickup hours.' },
-    { t: 'OUR SOLUTION', c: 'GuardLink provides a "Biometric Handshake"—a dual-path verification system that confirms the identity of both student and guardian simultaneously.' },
-    { t: 'FLEXIBILITY', c: 'Supports multiple authorized guardians per student (Father, Mother, Local Guardian) with individual biometric enrollments and audit logs.' },
-    { t: 'ROI & COMPLIANCE', c: 'Reduces school liability, streamlines traffic flow during pickup, and demonstrates an elite commitment to child safety that parents trust.' }
+  // Content
+  doc.setFontSize(12);
+  doc.setTextColor(40);
+  
+  const content = [
+    { t: '1. AI TECHNOLOGY & MODEL USED', c: 'The application uses "@vladmandic/face-api" for facial recognition, specifically the TinyFaceDetector neural network. This lightweight model is optimized for real-time performance on edge devices, allowing biometric matching entirely within the browser without server-side dependencies.' },
+    { t: '2. TECHNOLOGY STACK', c: 'Frontend: React, TypeScript, Vite. Styling: Tailwind CSS. Real-time Communication: Socket.io. Biometric Engine: Face-API (vladmandic), MediaPipe Vision Tasks. PDF Generation: jsPDF.' },
+    { t: '3. DETECTED CODE SEGMENT: FACE API INITIALIZATION', c: `// Load face-api models
+await Promise.all([
+  faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+  faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+  faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+]);` },
+    { t: '4. DETECTED CODE SEGMENT: MATCHING LOGIC', c: `const studentMatch = studentMatcher.findBestMatch(det.descriptor);
+if (studentMatch.label !== 'unknown' && studentMatch.distance < 0.40) {
+  bestMatch = studentMatch;
+  matchType = 'student';
+}` }
   ];
 
-  let yPos = 75;
-  points.forEach(p => {
-    doc.setFontSize(10);
+  let yPos = 45;
+  content.forEach(p => {
+    doc.setFontSize(11);
     doc.setTextColor(primaryColor[0], primaryColor[1], primaryColor[2]);
     doc.text(p.t, 20, yPos);
     
@@ -173,8 +184,8 @@ export const exportPresentationDoc = () => {
     doc.setTextColor(60);
     const lines = doc.splitTextToSize(p.c, 160);
     doc.text(lines, 20, yPos + 6);
-    yPos += 25;
+    yPos += 20 + (lines.length * 7);
   });
 
-  doc.save('GuardLink-Enterprise-Presentation.pdf');
+  doc.save('GuardLink-Technology-Report.pdf');
 };

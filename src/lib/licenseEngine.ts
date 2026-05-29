@@ -7,9 +7,9 @@
 // Secret Constants - Do not expose to UI
 const _S = [0x5A, 0x1F, 0x3C]; // Salt multi-layer
 const ENGINE_CONFIG = {
-  IDENTIFIER: "1802",
+  IDENTIFIER: "1808", // Updated identifier
   SIG: "DM",
-  MIN_LEN: 22,
+  MIN_LEN: 19, // Updated for new format DM1808-DDMMYYYY-Days
   XOR: () => _S[0] ^ _S[1] // Computed at runtime
 };
 
@@ -17,6 +17,7 @@ export interface LicenseCheckResult {
   valid: boolean;
   expiry?: number;
   error?: string;
+  daysRemaining?: number; // Add daysRemaining
 }
 
 /**
@@ -42,36 +43,33 @@ const reverseTransform = (input: string): string => {
 };
 
 /**
- * Validates the obfuscated license signature
+ * Validates the obfuscated license signature: DM1808-DDMMYYYY-Days
  */
-export const validateLicense = (obfuscatedKey: string, schoolName?: string): LicenseCheckResult => {
+export const validateLicense = (obfuscatedKey: string): LicenseCheckResult => {
   try {
     const key = reverseTransform(obfuscatedKey);
+    // Format: DM1808-DDMMYYYY-Days
     if (!key || key.length < ENGINE_CONFIG.MIN_LEN) {
       return { valid: false, error: "ERR_SIG_LEN" };
     }
 
-    const datePart = key.substring(0, 8);
-    const daysPart = key.substring(8, 12);
-    const schoolPart = key.substring(12, 16);
-    const fixedPart = key.substring(16, 20);
-    const suffixPart = key.substring(20, 22);
+    const parts = key.split('-');
+    if (parts.length !== 3) return { valid: false, error: "ERR_FORMAT" };
 
-    // Deep Integrity Check
-    if (fixedPart !== ENGINE_CONFIG.IDENTIFIER || suffixPart !== ENGINE_CONFIG.SIG) {
+    const sigIdPart = parts[0]; // DM1808
+    const sig = sigIdPart.substring(0, 2);
+    const id = sigIdPart.substring(2, 6);
+    
+    if (sig !== ENGINE_CONFIG.SIG || id !== ENGINE_CONFIG.IDENTIFIER) {
       return { valid: false, error: "ERR_SIG_VOID" };
     }
 
-    if (schoolName) {
-      const expectedSchoolSig = schoolName.substring(0, 4).toUpperCase().padEnd(4, 'X');
-      if (schoolPart !== expectedSchoolSig) {
-        return { valid: false, error: "ERR_SCHOOL_AUTH" };
-      }
-    }
+    const datePart = parts[1]; // DDMMYYYY
+    const daysPart = parts[2]; // Days
 
-    const year = parseInt(datePart.substring(0, 4));
-    const month = parseInt(datePart.substring(4, 6)) - 1;
-    const day = parseInt(datePart.substring(6, 8));
+    const day = parseInt(datePart.substring(0, 2));
+    const month = parseInt(datePart.substring(2, 4)) - 1;
+    const year = parseInt(datePart.substring(4, 8));
     const durationDays = parseInt(daysPart);
 
     const activationDate = new Date(year, month, day);
@@ -80,8 +78,10 @@ export const validateLicense = (obfuscatedKey: string, schoolName?: string): Lic
     }
 
     const expiryTime = activationDate.getTime() + (durationDays * 24 * 60 * 60 * 1000);
+    const now = Date.now();
+    const daysRemaining = Math.max(0, Math.ceil((expiryTime - now) / (1000 * 60 * 60 * 24)));
     
-    return { valid: true, expiry: expiryTime };
+    return { valid: true, expiry: expiryTime, daysRemaining };
   } catch (e) {
     return { valid: false, error: "ERR_SYSTEM" };
   }
@@ -90,15 +90,15 @@ export const validateLicense = (obfuscatedKey: string, schoolName?: string): Lic
 /**
  * Generates an obfuscated signature (Internal)
  */
-export const generateLicense = (days: number, schoolName: string): string => {
+export const generateLicense = (days: number): string => {
   const now = new Date();
-  const dateStr = now.getFullYear().toString() + 
-                  (now.getMonth() + 1).toString().padStart(2, '0') + 
-                  now.getDate().toString().padStart(2, '0');
+  const dateStr = 
+    now.getDate().toString().padStart(2, '0') + 
+    (now.getMonth() + 1).toString().padStart(2, '0') + 
+    now.getFullYear().toString();
   
-  const daysStr = days.toString().padStart(4, '0');
-  const schoolSig = (schoolName || "DEMO").substring(0, 4).toUpperCase().padEnd(4, 'X');
+  const daysStr = days.toString().padStart(3, '0');
   
-  const rawKey = `${dateStr}${daysStr}${schoolSig}${ENGINE_CONFIG.IDENTIFIER}${ENGINE_CONFIG.SIG}`;
+  const rawKey = `${ENGINE_CONFIG.SIG}${ENGINE_CONFIG.IDENTIFIER}-${dateStr}-${daysStr}`;
   return transform(rawKey);
 };
