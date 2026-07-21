@@ -1130,9 +1130,12 @@ function Scanner({
         });
         setFaceDetector(detector);
       } catch (err) {
+        console.error("Full Error:", err);
         let errorMessage = 'Unknown error';
         if (err instanceof Error) {
           errorMessage = err.message;
+        } else if (typeof Event !== 'undefined' && err instanceof Event) {
+          errorMessage = `Network or Loading Error (Event Type: ${err.type})`;
         } else if (typeof err === 'object' && err !== null && 'message' in err) {
           errorMessage = String((err as any).message);
         } else {
