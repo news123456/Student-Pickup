@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as faceapi from '@vladmandic/face-api';
 import { FaceDetector, FilesetResolver, Detection } from '@mediapipe/tasks-vision';
 import { 
@@ -50,7 +50,7 @@ type Accent = 'emerald' | 'blue' | 'purple' | 'amber' | 'rose';
 export default function App() {
   const [currentUser] = useState<User>({ username: 'AdminUser', role: 'ADMIN' }); // Temporary default session
   const [isModelsLoaded, setIsModelsLoaded] = useState(false);
-  const [initError, setInitError] = useState<string | null>(null);
+  const [appErrorMessage, setAppErrorMessage] = useState<string | null>(null);
   const [registry, setRegistry] = useState<RegistryEntry[]>([]);
   const [activeTab, setActiveTab] = useState<'scan' | 'register' | 'history' | 'admin'>('scan');
   const [currentMatch, setCurrentMatch] = useState<{
@@ -218,10 +218,10 @@ export default function App() {
         }
       } catch (error) {
         console.error("Initialization error:", error);
-        setInitError(error instanceof Error ? error.message : "System initialization failed");
+        setAppErrorMessage(error instanceof Error ? error.message : "System initialization failed");
         if (error instanceof Error && error.message.includes("Failed to fetch")) {
           console.error("Face-api models failed to load. Check your internet connection or the MODEL_URL.");
-          setInitError("Network Error: Failed to fetch AI models. Check your connection or the MODEL_URL.");
+          setAppErrorMessage("Network Error: Failed to fetch AI models. Check your connection or the MODEL_URL.");
         }
       }
     }
@@ -420,7 +420,7 @@ export default function App() {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
         <div className="text-center space-y-8 max-w-md">
-          {initError ? (
+          {appErrorMessage ? (
             <div className="w-20 h-20 bg-red-500/10 rounded-3xl flex items-center justify-center text-red-500 mx-auto border border-red-500/20 shadow-lg shadow-red-500/5">
               <AlertTriangle className="w-10 h-10" />
             </div>
@@ -435,14 +435,14 @@ export default function App() {
           
           <div className="space-y-4">
             <h1 className="text-2xl font-black tracking-tight uppercase text-text-primary">
-              {initError ? "System Offline" : "Initializing Sentinel"}
+              {appErrorMessage ? "System Offline" : "Initializing Sentinel"}
             </h1>
             <p className="text-text-secondary text-[10px] sm:text-xs font-bold tracking-widest uppercase opacity-60 leading-relaxed">
-              {initError || "Synchronizing Neural weights & Encrypted database layers..."}
+              {appErrorMessage || "Synchronizing Neural weights & Encrypted database layers..."}
             </p>
           </div>
 
-          {initError && (
+          {appErrorMessage && (
             <button 
               onClick={() => window.location.reload()}
               className="w-full py-4 bg-white text-black rounded-2xl font-black text-xs tracking-[0.3em] uppercase hover:bg-accent-emerald transition-all shadow-xl shadow-black/20"
@@ -1133,10 +1133,12 @@ function Scanner({
         });
         setFaceDetector(detector);
       } catch (err) {
-        console.error("MediaPipe Init Error:", err);
+        const message = `MediaPipe Init Error: ${err instanceof Error ? err.message : String(err)}`;
+        setAppErrorMessage(message);
+        console.error(message, err);
       }
     }
-    // initMediaPipe();
+    initMediaPipe();
   }, []);
 
   const lastProcessingTime = useRef<number>(0);
@@ -2373,11 +2375,9 @@ function AdminTab({
   onDownload,
   onExportBackup,
   onImportBackup,
-  backupInterval,
   onStressTest,
   isGeneratingTest,
   onLogout,
-  onSetBackupInterval,
   systemSettings,
   onUpdateSettings,
   storagePath,
@@ -2423,11 +2423,6 @@ function AdminTab({
   const [genDays, setGenDays] = useState(30);
   const [generatedKey, setGeneratedKey] = useState('');
   const adminVideoRef = useRef<HTMLVideoElement>(null);
-
-  const generateNewLicense = () => {
-    const key = generateLicense(genDays);
-    setGeneratedKey(key);
-  };
 
   const filteredRegistry = registry.filter(person => {
     const searchLower = searchTerm.toLowerCase();
@@ -2628,13 +2623,13 @@ const handleSecureDelete = async (person: RegistryEntry) => {
              <div className="flex bg-surface p-1 rounded-xl border border-surface-border items-center">
                 <span className="hidden xs:block text-[8px] font-black text-text-secondary uppercase tracking-widest px-2">Auto-Save:</span>
                 <div className="flex space-x-1">
-                  {(['off', 'daily', 'weekly'] as BackupInterval[]).map((int) => (
+                  {(['off', 'daily', 'weekly'] as string[]).map((int) => (
                     <button
                       key={int}
-                      onClick={() => onSetBackupInterval(int)}
+                      onClick={() => {}}
                       className={cn(
                         "px-1.5 sm:px-2 py-1 rounded-md text-[8px] font-black uppercase transition-all",
-                        backupInterval === int 
+                        'off' === int 
                           ? "bg-accent-emerald text-black" 
                           : "text-text-secondary hover:text-white hover:bg-white/5"
                       )}
