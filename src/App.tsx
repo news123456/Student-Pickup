@@ -50,7 +50,7 @@ type Accent = 'emerald' | 'blue' | 'purple' | 'amber' | 'rose';
 export default function App() {
   const [currentUser] = useState<User>({ username: 'AdminUser', role: 'ADMIN' }); // Temporary default session
   const [isModelsLoaded, setIsModelsLoaded] = useState(false);
-  const [appErrorMessage, setAppErrorMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [registry, setRegistry] = useState<RegistryEntry[]>([]);
   const [activeTab, setActiveTab] = useState<'scan' | 'register' | 'history' | 'admin'>('scan');
   const [currentMatch, setCurrentMatch] = useState<{
@@ -218,10 +218,10 @@ export default function App() {
         }
       } catch (error) {
         console.error("Initialization error:", error);
-        setAppErrorMessage(error instanceof Error ? error.message : "System initialization failed");
+        setErrorMessage(error instanceof Error ? error.message : "System initialization failed");
         if (error instanceof Error && error.message.includes("Failed to fetch")) {
           console.error("Face-api models failed to load. Check your internet connection or the MODEL_URL.");
-          setAppErrorMessage("Network Error: Failed to fetch AI models. Check your connection or the MODEL_URL.");
+          setErrorMessage("Network Error: Failed to fetch AI models. Check your connection or the MODEL_URL.");
         }
       }
     }
@@ -420,7 +420,7 @@ export default function App() {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
         <div className="text-center space-y-8 max-w-md">
-          {appErrorMessage ? (
+          {errorMessage ? (
             <div className="w-20 h-20 bg-red-500/10 rounded-3xl flex items-center justify-center text-red-500 mx-auto border border-red-500/20 shadow-lg shadow-red-500/5">
               <AlertTriangle className="w-10 h-10" />
             </div>
@@ -435,14 +435,14 @@ export default function App() {
           
           <div className="space-y-4">
             <h1 className="text-2xl font-black tracking-tight uppercase text-text-primary">
-              {appErrorMessage ? "System Offline" : "Initializing Sentinel"}
+              {errorMessage ? "System Offline" : "Initializing Sentinel"}
             </h1>
             <p className="text-text-secondary text-[10px] sm:text-xs font-bold tracking-widest uppercase opacity-60 leading-relaxed">
-              {appErrorMessage || "Synchronizing Neural weights & Encrypted database layers..."}
+              {errorMessage || "Synchronizing Neural weights & Encrypted database layers..."}
             </p>
           </div>
 
-          {appErrorMessage && (
+          {errorMessage && (
             <button 
               onClick={() => window.location.reload()}
               className="w-full py-4 bg-white text-black rounded-2xl font-black text-xs tracking-[0.3em] uppercase hover:bg-accent-emerald transition-all shadow-xl shadow-black/20"
@@ -461,65 +461,65 @@ export default function App() {
     <div className="min-h-screen bg-background text-text-primary font-sans selection:bg-accent-emerald/30">
 
       {/* Refined Navigation Bar */}
-      <nav className="h-[72px] border-b border-surface-border px-4 sm:px-6 flex items-center justify-between sticky top-0 z-50 backdrop-blur-xl bg-background/90">
+      <nav className="h-14 border-b border-surface-border px-4 sm:px-6 flex items-center justify-between sticky top-0 z-50 backdrop-blur-xl bg-background/90">
         <div className="flex items-center space-x-3 sm:space-x-4">
-          <div className="w-9 h-9 sm:w-10 sm:h-10 bg-accent-emerald rounded-lg sm:rounded-xl flex items-center justify-center group shadow-sm flex-shrink-0">
-            <ShieldCheck className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+          <div className="w-8 h-8 sm:w-9 sm:h-9 bg-accent-emerald rounded-lg flex items-center justify-center group shadow-sm flex-shrink-0">
+            <ShieldCheck className="w-5 h-5 sm:w-5 sm:h-5 text-white" />
           </div>
           <div className="hidden xs:block">
-            <h1 className="text-[12px] sm:text-sm font-extrabold tracking-tight uppercase leading-none text-text-primary">Sentinel</h1>
-            <p className="hidden sm:block text-[10px] font-medium text-text-secondary mt-1 uppercase tracking-widest opacity-70">Main Campus Entry</p>
+            <h1 className="text-[11px] sm:text-xs font-extrabold tracking-tight uppercase leading-none text-text-primary">Sentinel</h1>
+            <p className="hidden sm:block text-[9px] font-medium text-text-secondary mt-0.5 uppercase tracking-widest opacity-70">Main Campus Entry</p>
           </div>
         </div>
 
-        <div className="flex bg-surface border border-surface-border p-1 rounded-xl shadow-inner shadow-black/5">
+        <div className="flex bg-surface border border-surface-border p-0.5 rounded-lg shadow-inner shadow-black/5">
           <NavBtn 
             active={activeTab === 'scan'} 
             onClick={() => setActiveTab('scan')} 
             label="Scanner" 
-            icon={<Camera className="w-4 h-4" />}
+            icon={<Camera className="w-3.5 h-3.5" />}
           />
           <NavBtn 
             active={activeTab === 'register'} 
             onClick={() => setActiveTab('register')} 
             label="Enroll" 
-            icon={<UserPlus className="w-4 h-4" />}
+            icon={<UserPlus className="w-3.5 h-3.5" />}
           />
           <NavBtn 
             active={activeTab === 'history'} 
             onClick={() => setActiveTab('history')} 
             label="Logs" 
-            icon={<History className="w-4 h-4" />}
+            icon={<History className="w-3.5 h-3.5" />}
           />
           <NavBtn 
             active={activeTab === 'admin'} 
             onClick={() => setActiveTab('admin')} 
             label="Admin" 
-            icon={<Lock className="w-4 h-4" />}
+            icon={<Lock className="w-3.5 h-3.5" />}
           />
         </div>
 
-        <div className="hidden lg:flex items-center space-x-6">
+        <div className="hidden lg:flex items-center space-x-4">
           {/* Sync Status Badge */}
-          <div className="flex items-center space-x-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/10">
+          <div className="flex items-center space-x-2 px-2 py-1 rounded-full bg-white/5 border border-white/10">
             <div className={cn(
               "w-1.5 h-1.5 rounded-full",
               syncStatus === 'syncing' ? "bg-amber-500 animate-pulse" : 
               syncStatus === 'error' ? "bg-red-500" : "bg-emerald-500"
             )} />
-            <span className="text-[9px] font-black text-text-secondary uppercase tracking-[0.2em] leading-none">
+            <span className="text-[8px] font-black text-text-secondary uppercase tracking-[0.2em] leading-none">
               {syncStatus === 'syncing' ? 'SYNC' : syncStatus === 'error' ? 'ERR' : 'LIVE'}
             </span>
           </div>
 
-          <div className="flex items-center bg-surface p-1 rounded-lg border border-surface-border">
-            <div className="flex items-center space-x-1 px-1">
+          <div className="flex items-center bg-surface p-0.5 rounded-md border border-surface-border">
+            <div className="flex items-center space-x-0.5 px-0.5">
               {(['emerald', 'blue', 'purple', 'amber', 'rose'] as Accent[]).map((a) => (
                 <button
                   key={a}
                   onClick={() => changeAccent(a)}
                   className={cn(
-                    "w-2.5 h-2.5 rounded-full transition-all border border-white/10",
+                    "w-2 h-2 rounded-full transition-all border border-white/10",
                     accent === a ? "scale-125 border-white" : "opacity-40 hover:opacity-100",
                     a === 'emerald' && "bg-[#10b981]",
                     a === 'blue' && "bg-[#3b82f6]",
@@ -534,28 +534,24 @@ export default function App() {
 
           <button
             onClick={() => setTheme(prev => prev === 'light' ? 'dark' : 'light')}
-            className="w-8 h-8 rounded-lg flex items-center justify-center border border-surface-border bg-surface hover:border-accent-emerald transition-all cursor-pointer group"
+            className="w-7 h-7 rounded-md flex items-center justify-center border border-surface-border bg-surface hover:border-accent-emerald transition-all cursor-pointer group"
           >
             {theme === 'light' ? (
-              <Moon className="w-4 h-4 text-text-secondary group-hover:text-accent-emerald" />
+              <Moon className="w-3.5 h-3.5 text-text-secondary group-hover:text-accent-emerald" />
             ) : (
-              <Sun className="w-4 h-4 text-text-secondary group-hover:text-amber-400" />
+              <Sun className="w-3.5 h-3.5 text-text-secondary group-hover:text-amber-400" />
             )}
           </button>
-
-          <div className="status-badge">
-            <span className="w-1.5 h-1.5 bg-accent-emerald rounded-full mr-2 animate-pulse" />
-            System Live
-          </div>
+          
           <div className="text-right">
-            <div className="text-xs font-bold text-text-primary uppercase">{new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
-            <div className="text-[10px] font-mono text-text-secondary uppercase mt-0.5">{new Date().toLocaleTimeString()}</div>
+            <div className="text-[10px] font-bold text-text-primary uppercase">{new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
+            <div className="text-[8px] font-mono text-text-secondary uppercase">{new Date().toLocaleTimeString()}</div>
           </div>
         </div>
       </nav>
 
-      <main className="min-h-[calc(100vh-72px)] sm:pb-0 pb-20">
-        <div className="max-w-[1600px] mx-auto p-4 sm:p-6 md:p-10">
+      <main className="min-h-[calc(100vh-56px)] sm:pb-0 pb-20">
+        <div className="max-w-[1600px] mx-auto p-3 sm:p-4 md:p-6">
         <AnimatePresence mode="wait">
           {activeTab === 'scan' && (
             <motion.div 
@@ -1090,6 +1086,7 @@ function Scanner({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [detectionInfo, setDetectionInfo] = useState<{ label: string; confidence: number; isMatch: boolean; box: any }[]>([]);
+  const [privacyMaskEnabled, setPrivacyMaskEnabled] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [faceDetector, setFaceDetector] = useState<FaceDetector | null>(null);
@@ -1133,8 +1130,17 @@ function Scanner({
         });
         setFaceDetector(detector);
       } catch (err) {
-        const message = `MediaPipe Init Error: ${err instanceof Error ? err.message : String(err)}`;
-        setAppErrorMessage(message);
+        let errorMessage = 'Unknown error';
+        if (err instanceof Error) {
+          errorMessage = err.message;
+        } else if (typeof err === 'object' && err !== null && 'message' in err) {
+          errorMessage = String((err as any).message);
+        } else {
+          errorMessage = String(err);
+        }
+        
+        const message = `MediaPipe Init Error: ${errorMessage}`;
+        setErrorMsg(message);
         console.error(message, err);
       }
     }
@@ -1582,9 +1588,9 @@ function Scanner({
       {/* Dynamic Recognition Overlay */}
       <div className="absolute inset-0 z-20 pointer-events-none">
         {detectionInfo.map((det, i) => (
-          <div 
+            <div 
             key={i}
-            className="absolute border-2 rounded-xl transition-all duration-300"
+            className="absolute border-2 rounded-xl transition-all duration-300 overflow-hidden"
             style={{
               left: `${(det.box.x / (videoRef.current?.videoWidth || 1)) * 100}%`,
               top: `${(det.box.y / (videoRef.current?.videoHeight || 1)) * 100}%`,
@@ -1594,6 +1600,9 @@ function Scanner({
               boxShadow: det.isMatch ? '0 0 20px rgba(16, 185, 129, 0.4)' : '0 0 20px rgba(239, 68, 68, 0.4)'
             }}
           >
+            {privacyMaskEnabled && !det.isMatch && (
+                <div className="absolute inset-0 bg-black/80 backdrop-blur-md" />
+            )}
             <div className={cn(
               "absolute -top-10 left-0 px-3 py-1.5 rounded-lg flex items-center space-x-2 backdrop-blur-md border",
               det.isMatch ? "bg-emerald-500/20 border-emerald-500/50" : "bg-red-500/20 border-red-500/50"
@@ -1681,6 +1690,19 @@ function Scanner({
               <h3 className="text-white text-xs font-black uppercase tracking-widest">Configuration</h3>
               <button onClick={() => setShowSettings(false)} className="text-white/40 hover:text-white transition-all">
                 <X className="w-4 h-4" />
+              </button>
+            </div>
+            
+            <div className="space-y-2">
+              <p className="text-[9px] text-white/40 font-bold uppercase tracking-wider ml-1">Scanner Privacy</p>
+              <button 
+                onClick={() => setPrivacyMaskEnabled(!privacyMaskEnabled)}
+                className="w-full flex items-center justify-between px-3 py-2 bg-white/5 border border-white/5 rounded-lg text-[10px] text-white/70 hover:bg-white/10 hover:border-accent-emerald/50 transition-all group"
+              >
+                <span>Privacy Mask (Unrecognized)</span>
+                <div className={cn("w-6 h-3 rounded-full transition-colors", privacyMaskEnabled ? "bg-accent-emerald" : "bg-white/10")}>
+                    <div className={cn("w-3 h-3 rounded-full bg-white transition-transform", privacyMaskEnabled ? "translate-x-3" : "translate-x-0")} />
+                </div>
               </button>
             </div>
             
