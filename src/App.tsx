@@ -1,7 +1,3 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
 
 import React, { useState, useEffect, useRef } from 'react';
 import * as faceapi from '@vladmandic/face-api';
@@ -14,7 +10,6 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { io, Socket } from 'socket.io-client';
-import { validateLicense, generateLicense } from './lib/licenseEngine';
 import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import { cn } from './lib/utils';
@@ -44,8 +39,6 @@ interface SystemSettings {
   systemPassword?: string;
   backupEnabled?: boolean;
   schoolName?: string;
-  licenseKey?: string;
-  licenseExpiryDate?: number;
   lastSeenTimestamp?: number;
   lastSyncTimestamp?: number;
   isTampered?: boolean;
@@ -80,80 +73,6 @@ export default function App() {
     return (saved as 'light' | 'dark') || 'dark';
   });
   const [storagePath, setStoragePath] = useState<string>('');
-
-  // --- LICENSING LOGIC (STRICT OFFLINE MODE) ---
-  const [licenseStatus, setLicenseStatus] = useState<{
-    isActive: boolean;
-    remainingDays: number;
-    error?: string;
-    isTampered?: boolean;
-  }>({ isActive: false, remainingDays: 0 });
-
-  useEffect(() => {
-    let lastUpdate = 0;
-    const checkLicense = () => {
-      const now = Date.now();
-      const { licenseKey, lastSeenTimestamp, isTampered, schoolName } = systemSettings;
-
-      // Anti-Tamper Check (Grace period of 5 mins for clock jitter)
-      if (lastSeenTimestamp && now < (lastSeenTimestamp - 300000)) { 
-        if (!isTampered) {
-          const updated = { ...systemSettings, isTampered: true };
-          setSystemSettings(updated);
-          syncSettingsWithServer(updated);
-        }
-        return;
-      }
-
-      // Integrity Update (every 2 min)
-      if (!isTampered && now > (lastSeenTimestamp || 0) + 120000) {
-        setSystemSettings(prev => ({ ...prev, lastSeenTimestamp: now }));
-        if (now - lastUpdate > 300000) {
-          syncSettingsWithServer({ ...systemSettings, lastSeenTimestamp: now });
-          lastUpdate = now;
-        }
-      }
-
-      if (isTampered) {
-        setLicenseStatus({ isActive: false, remainingDays: 0, isTampered: true });
-        return;
-      }
-
-      if (!licenseKey) {
-        setLicenseStatus({ isActive: false, remainingDays: 0 });
-        return;
-      }
-
-      const valCheck = validateLicense(licenseKey);
-      if (!valCheck.valid) {
-        setLicenseStatus({ isActive: false, remainingDays: 0, error: valCheck.error || "Authentication Failure" });
-        return;
-      }
-
-      setLicenseStatus({ isActive: true, remainingDays: valCheck.daysRemaining || 0 });
-    };
-
-    const interval = setInterval(checkLicense, 30000); 
-    checkLicense();
-    return () => clearInterval(interval);
-  }, [systemSettings.isTampered, systemSettings.licenseKey]);
-
-  const activateProduct = (key: string) => {
-    const result = validateLicense(key);
-    if (result.valid) {
-      const updated: SystemSettings = {
-        ...systemSettings,
-        licenseKey: key,
-        licenseExpiryDate: result.expiry,
-        isTampered: false,
-        lastSeenTimestamp: Date.now()
-      };
-      setSystemSettings(updated);
-      syncSettingsWithServer(updated);
-      return true;
-    }
-    return false;
-  };
 
   useEffect(() => {
     const fetchStoragePath = async (retries = 5) => {
@@ -536,26 +455,10 @@ export default function App() {
     );
   }
 
+
   return (
     <>
     <div className="min-h-screen bg-background text-text-primary font-sans selection:bg-accent-emerald/30">
-      {!licenseStatus.isActive && activeTab === 'scan' && (
-        <div className="absolute inset-0 z-50 bg-black/40 backdrop-blur-3xl flex flex-col items-center justify-center p-6 text-center">
-          <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center border border-red-500/20 mb-6">
-            <Lock className="w-10 h-10 text-red-500" />
-          </div>
-          <h3 className="text-3xl font-black text-white italic uppercase tracking-tighter mb-2 underline decoration-red-500 decoration-4 underline-offset-8">System Hardware Blocked</h3>
-          <p className="text-sm font-bold text-white/60 uppercase tracking-widest max-w-md">
-            Biometric engine is offline. {licenseStatus.isTampered ? "SECURITY TAMPER DETECTED: Reset required." : "Activation required in Admin Panel."}
-          </p>
-          <button 
-            onClick={() => setActiveTab('admin')}
-            className="mt-8 px-8 py-4 bg-white text-black font-black text-xs uppercase tracking-[0.2em] rounded-xl hover:scale-105 active:scale-95 transition-all shadow-xl"
-          >
-            Go to Activation Panel
-          </button>
-        </div>
-      )}
 
       {/* Refined Navigation Bar */}
       <nav className="h-[72px] border-b border-surface-border px-4 sm:px-6 flex items-center justify-between sticky top-0 z-50 backdrop-blur-xl bg-background/90">
@@ -1065,8 +968,6 @@ export default function App() {
                 setRegistry(updated);
                 syncRegistryWithServer(updated);
               }}
-              onActivate={activateProduct}
-              licenseStatus={licenseStatus}
               syncStatus={syncStatus}
               accent={accent}
               onAccentChange={(newAccent) => {
@@ -1219,9 +1120,11 @@ function Scanner({
   useEffect(() => {
     async function initMediaPipe() {
       try {
+        console.log("Initializing MediaPipe, calling FilesetResolver.forVisionTasks");
         const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm"
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
         );
+        console.log("MediaPipe FilesetResolver initialized:", vision);
         const detector = await FaceDetector.createFromOptions(vision, {
           baseOptions: {
             modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite`
@@ -1233,7 +1136,7 @@ function Scanner({
         console.error("MediaPipe Init Error:", err);
       }
     }
-    initMediaPipe();
+    // initMediaPipe();
   }, []);
 
   const lastProcessingTime = useRef<number>(0);
@@ -2479,8 +2382,6 @@ function AdminTab({
   onUpdateSettings,
   storagePath,
   onUpdateEntry,
-  onActivate,
-  licenseStatus,
   syncStatus,
   accent,
   onAccentChange
@@ -2500,8 +2401,6 @@ function AdminTab({
   onUpdateSettings: (s: SystemSettings) => void;
   storagePath: string;
   onUpdateEntry: (entry: RegistryEntry) => void;
-  onActivate: (key: string) => boolean;
-  licenseStatus: { isActive: boolean; remainingDays: number; isTampered?: boolean; error?: string };
   syncStatus: 'idle' | 'syncing' | 'error';
   accent: Accent;
   onAccentChange: (a: Accent) => void;
@@ -3047,14 +2946,7 @@ const handleSecureDelete = async (person: RegistryEntry) => {
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3">
                   <Zap className="w-5 h-5 text-accent-emerald" />
-                  <h4 className="text-sm font-black text-white uppercase tracking-tighter italic">License Status</h4>
-                </div>
-                <div className="flex items-center space-x-3">
-                  <span className={cn("text-xs font-black uppercase tracking-widest", licenseStatus.isActive ? "text-accent-emerald" : "text-red-500")}>
-                    {licenseStatus.isActive ? "ACTIVE" : "INACTIVE / EXPIRED"}
-                  </span>
-                  <div className="w-px h-4 bg-white/10" />
-                  <span className="text-xs font-bold text-text-primary">{licenseStatus.remainingDays} DAYS REMAINING</span>
+                  <h4 className="text-sm font-black text-white uppercase tracking-tighter italic">System Info</h4>
                 </div>
               </div>
 
