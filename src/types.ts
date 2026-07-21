@@ -1,3 +1,10 @@
+export type Role = 'ADMIN' | 'DEVELOPER';
+
+export type User = {
+  username: string;
+  role: Role;
+};
+
 export interface Guardian {
   role: 'Father' | 'Mother' | 'Guardian';
   name: string;

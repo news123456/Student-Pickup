@@ -23,9 +23,9 @@ async function startServer() {
           "script-src": ["'self'", "'unsafe-inline'"],
           "style-src": ["'self'", "'unsafe-inline'"],
           "img-src": ["'self'", "data:", "blob:"],
-          "connect-src": ["'self'", "ws:", "wss:"],
+          "connect-src": ["'self'", "ws:", "wss:", "https://cdn.jsdelivr.net"],
           "font-src": ["'self'", "https://fonts.gstatic.com"],
-          "frame-ancestors": ["'none'"],
+          "frame-ancestors": ["*"],
         },
       },
     })

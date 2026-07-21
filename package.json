@@ -21,7 +21,6 @@
     "clsx": "^2.1.1",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
-    "firebase": "^12.12.1",
     "helmet": "^8.2.0",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",

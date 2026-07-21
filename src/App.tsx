@@ -19,9 +19,17 @@ import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import { cn } from './lib/utils';
 import { saveData, getData } from './lib/db';
-import { RegistryEntry, PickupLog, Guardian } from './types.ts';
-import { exportLogsToPDF, exportRegistryToPDF, exportTechnicalDoc, exportTechnologyReport } from './lib/pdfExport';
+import { RegistryEntry, PickupLog, Guardian } from './types';
+
+export type Role = 'ADMIN' | 'DEVELOPER';
+
+export type User = {
+  username: string;
+  role: Role;
+};
+import { exportLogsToPDF, exportRegistryToPDF } from './lib/pdfExport';
 import { DetailPopup } from './components/DetailPopup';
+import { RoleGuard } from './components/RoleGuard';
 
 
 // Constants
@@ -44,9 +52,10 @@ interface SystemSettings {
 }
 
 type Accent = 'emerald' | 'blue' | 'purple' | 'amber' | 'rose';
-type BackupInterval = 'off' | 'daily' | 'weekly';
+
 
 export default function App() {
+  const [currentUser] = useState<User>({ username: 'AdminUser', role: 'ADMIN' }); // Temporary default session
   const [isModelsLoaded, setIsModelsLoaded] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
   const [registry, setRegistry] = useState<RegistryEntry[]>([]);
@@ -61,7 +70,6 @@ export default function App() {
   const [adminPassword, setAdminPassword] = useState('');
   const [isLoginError, setIsLoginError] = useState(false);
   const [accent, setAccent] = useState<Accent>((localStorage.getItem(ACCENT_STORAGE_KEY) as Accent) || 'emerald');
-  const [backupInterval, setBackupInterval] = useState<BackupInterval>((localStorage.getItem(BACKUP_INTERVAL_KEY) as BackupInterval) || 'off');
   const [lastBackup, setLastBackup] = useState<number>(Number(localStorage.getItem(LAST_BACKUP_KEY)) || 0);
   const [systemSettings, setSystemSettings] = useState<SystemSettings>({ systemPassword: 'admin', backupEnabled: true });
   const [availableDevices, setAvailableDevices] = useState<MediaDeviceInfo[]>([]);
@@ -411,11 +419,6 @@ export default function App() {
     localStorage.setItem(ACCENT_STORAGE_KEY, newAccent);
   };
 
-  const changeBackupInterval = (interval: BackupInterval) => {
-    setBackupInterval(interval);
-    localStorage.setItem(BACKUP_INTERVAL_KEY, interval);
-  };
-
   const exportBackup = () => {
     const data = {
       registry,
@@ -437,25 +440,7 @@ export default function App() {
   };
 
   // Auto-backup monitor
-  useEffect(() => {
-    if (backupInterval === 'off' || registry.length === 0) return;
-
-    const checkBackup = () => {
-      const now = Date.now();
-      const oneDay = 24 * 60 * 60 * 1000;
-      const oneWeek = 7 * oneDay;
-      const threshold = backupInterval === 'daily' ? oneDay : oneWeek;
-
-      if (now - lastBackup > threshold) {
-        console.log(`Triggering auto-backup (${backupInterval})`);
-        exportBackup();
-      }
-    };
-
-    const timer = setInterval(checkBackup, 60000); 
-    checkBackup(); 
-    return () => clearInterval(timer);
-  }, [backupInterval, lastBackup, registry]);
+  // Auto-backup monitor removed: triggered manually per entry now.
 
   const importBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -486,6 +471,7 @@ export default function App() {
     const newRegistry = [...registry, entry];
     setRegistry(newRegistry);
     syncRegistryWithServer(newRegistry);
+    exportBackup();
   };
 
   const logPickup = (entry: RegistryEntry, guardianIndex: number, cameraLabel?: string) => {
@@ -934,13 +920,7 @@ export default function App() {
                     <p className="text-text-secondary text-[10px] sm:text-xs font-medium tracking-tight">Full historical log of campus student releases.</p>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <button 
-                      onClick={() => exportLogsToPDF(recentPickups)}
-                      className="px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/5 rounded-lg text-[10px] font-black uppercase tracking-widest text-white flex items-center space-x-2 transition-all"
-                    >
-                      <Download className="w-3 h-3" />
-                      <span>Download PDF</span>
-                    </button>
+
                     <History className="w-10 h-10 sm:w-12 sm:h-12 text-white/5" />
                   </div>
                 </div>
@@ -1072,12 +1052,8 @@ export default function App() {
                 syncRegistryWithServer(updated);
               }}
               onDownload={() => exportRegistryToPDF(registry)}
-              onDownloadTechnical={exportTechnicalDoc}
-              onDownloadTechnology={exportTechnologyReport}
               onExportBackup={exportBackup}
               onImportBackup={importBackup}
-              backupInterval={backupInterval}
-              onSetBackupInterval={changeBackupInterval}
               systemSettings={systemSettings}
               onUpdateSettings={(s) => {
                 setSystemSettings(s);
@@ -2493,8 +2469,6 @@ function AdminTab({
   isLoginError, 
   onDelete,
   onDownload,
-  onDownloadTechnical,
-  onDownloadTechnology,
   onExportBackup,
   onImportBackup,
   backupInterval,
@@ -2521,12 +2495,8 @@ function AdminTab({
   onLogout: () => void;
   onDelete: (id: string) => void;
   onDownload: () => void;
-  onDownloadTechnical: () => void;
-  onDownloadTechnology: () => void;
   onExportBackup: () => void;
   onImportBackup: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  backupInterval: BackupInterval;
-  onSetBackupInterval: (v: BackupInterval) => void;
   systemSettings: SystemSettings;
   onUpdateSettings: (s: SystemSettings) => void;
   storagePath: string;
@@ -2779,20 +2749,8 @@ const handleSecureDelete = async (person: RegistryEntry) => {
 
              <div className="w-px h-8 bg-surface-border mx-2 hidden xl:block" />
 
-             <button 
-               onClick={onDownloadTechnical}
-               className="bg-surface hover:bg-white/10 px-3 sm:px-4 py-2 sm:py-3 rounded-xl border border-surface-border text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-text-secondary flex items-center space-x-2 transition-all cursor-pointer"
-             >
-               <ShieldCheck className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-               <span className="hidden xs:inline">Technical</span>
-             </button>
-             <button 
-               onClick={onDownloadTechnology}
-               className="bg-surface hover:bg-white/10 px-3 sm:px-4 py-2 sm:py-3 rounded-xl border border-surface-border text-[9px] sm:text-[10px] font-black uppercase tracking-widest text-text-secondary flex items-center space-x-2 transition-all cursor-pointer"
-             >
-               <Zap className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-               <span className="hidden xs:inline">Tech Report</span>
-             </button>
+
+
 
              <button 
               onClick={onDownload}
